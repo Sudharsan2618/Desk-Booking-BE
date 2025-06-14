@@ -18,88 +18,94 @@ class DeskData:
             cursor = conn.cursor()
             cursor.execute("""
                 WITH desk_details AS (
-                    SELECT 
-                        d.id AS desk_id,
-                        d.name AS desk_name,
-                        d.floor_number,
-                        d.capacity,
-                        d.description,
-                        d.status AS desk_status,
-                        b.name AS building_name,
-                        b.address AS building_address,
-                        b.amenities,
-                        b.operating_hours,
-                        l.name AS city,
-                        d.desk_type_id
-                    FROM sena.desks AS d
-                    LEFT JOIN sena.buildings AS b ON b.id = d.building_id
-                    LEFT JOIN sena.locations AS l ON l.id = d.location_id
-                ),
-                slot_status AS (
-                    SELECT 
-                        bt.desk_id,
-                        bt.slot_id,
-                        COALESCE(MAX(CASE 
-                            WHEN bt.status = 'booked' THEN 'booked'
-                            WHEN bt.status = 'held' THEN 'held'
-                            ELSE NULL 
-                        END), 'available') AS slot_status
-                    FROM sena.booking_transactions AS bt
-                    GROUP BY bt.desk_id, bt.slot_id
-                ),
-                desk_pricing AS (
-                    SELECT 
-                        dp.desk_type_id,
-                        dp.slot_id,
-                        dp.price
-                    FROM sena.desk_pricing AS dp
-                    WHERE dp.is_active = true
-                ),
-                slot_master AS (
-                    SELECT 
-                        sm.id AS slot_id,
-                        sm.slot_type,
-                        sm.start_time,
-                        sm.end_time,
-                        sm.time_zone
-                    FROM sena.slot_master AS sm
-                    WHERE sm.is_active = true
+    SELECT 
+        d.id AS desk_id,
+        d.name AS desk_name,
+        d.floor_number,
+        d.capacity,
+        d.description,
+        d.status AS desk_status,
+        b.name AS building_name,
+        b.address AS building_address,
+        b.amenities,
+        b.operating_hours,
+        l.name AS city,
+        d.desk_type_id
+    FROM sena.desks AS d
+    LEFT JOIN sena.buildings AS b ON b.id = d.building_id
+    LEFT JOIN sena.locations AS l ON l.id = d.location_id
+),
+slot_status AS (
+    SELECT 
+        sm.id AS slot_id,
+        sm.slot_type,
+        sm.start_time,
+        sm.end_time,
+        sm.time_zone,
+        d.id AS desk_id,
+        COALESCE(bt.status, 'available') AS slot_status
+    FROM sena.slot_master AS sm
+    CROSS JOIN sena.desks AS d
+    LEFT JOIN sena.booking_transactions AS bt 
+        ON sm.id = bt.slot_id
+        AND d.id = bt.desk_id
+        AND bt.updated_at::date = CURRENT_DATE
+),
+desk_pricing AS (
+    SELECT 
+        dp.desk_type_id,
+        dp.slot_id,
+        dp.price
+    FROM sena.desk_pricing AS dp
+    WHERE dp.is_active = true
+),
+slots_with_pricing AS (
+    SELECT 
+        ss.slot_id,
+        ss.slot_type,
+        ss.start_time,
+        ss.end_time,
+        ss.time_zone,
+        ss.desk_id,
+        ss.slot_status,
+        dp.price
+    FROM slot_status AS ss
+    LEFT JOIN desk_pricing AS dp 
+        ON dp.slot_id = ss.slot_id
+        AND dp.desk_type_id = (SELECT desk_type_id FROM sena.desks WHERE id = ss.desk_id)
+)
+SELECT 
+    JSON_AGG(
+        JSON_BUILD_OBJECT(
+            'desk_id', dd.desk_id,
+            'desk_name', dd.desk_name,
+            'floor_number', dd.floor_number,
+            'capacity', dd.capacity,
+            'description', dd.description,
+            'desk_status', dd.desk_status,
+            'building_name', dd.building_name,
+            'building_address', dd.building_address,
+            'amenities', dd.amenities,
+            'operating_hours', dd.operating_hours,
+            'city', dd.city,
+            'slots', (
+                SELECT JSON_AGG(
+                    JSON_BUILD_OBJECT(
+                        'slot_id', sp.slot_id,
+                        'slot_type', sp.slot_type,
+                        'start_time', sp.start_time,
+                        'end_time', sp.end_time,
+                        'time_zone', sp.time_zone,
+                        'status', sp.slot_status,
+                        'price', sp.price
+                    )
                 )
-                SELECT 
-                    JSON_AGG(
-                        JSON_BUILD_OBJECT(
-                            'desk_id', dd.desk_id,
-                            'desk_name', dd.desk_name,
-                            'floor_number', dd.floor_number,
-                            'capacity', dd.capacity,
-                            'description', dd.description,
-                            'desk_status', dd.desk_status,
-                            'building_name', dd.building_name,
-                            'building_address', dd.building_address,
-                            'amenities', dd.amenities,
-                            'operating_hours', dd.operating_hours,
-                            'city', dd.city,
-                            'slots', (
-                                SELECT JSON_AGG(
-                                    JSON_BUILD_OBJECT(
-                                        'slot_id', sm.slot_id,
-                                        'slot_type', sm.slot_type,
-                                        'start_time', sm.start_time,
-                                        'end_time', sm.end_time,
-                                        'time_zone', sm.time_zone,
-                                        'status', ss.slot_status,
-                                        'price', dp.price
-                                    )
-                                )
-                                FROM slot_master AS sm
-                                LEFT JOIN slot_status AS ss 
-                                    ON ss.desk_id = dd.desk_id AND ss.slot_id = sm.slot_id
-                                LEFT JOIN desk_pricing AS dp 
-                                    ON dp.desk_type_id = dd.desk_type_id AND dp.slot_id = sm.slot_id
-                            )
-                        )
-                    ) AS desks_json
-                FROM desk_details AS dd
+                FROM slots_with_pricing AS sp
+                WHERE sp.desk_id = dd.desk_id
+            )
+        )
+    ) AS desks_json
+FROM desk_details AS dd;
             """)
             
             result = cursor.fetchone()
