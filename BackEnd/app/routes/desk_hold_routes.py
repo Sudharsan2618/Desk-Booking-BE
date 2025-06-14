@@ -3,7 +3,7 @@ from app.models.desk_hold_model import DeskHold
 
 desk_hold_bp = Blueprint('desk_hold', __name__)
 
-@desk_hold_bp.route('/api/hold', methods=['POST'])
+@desk_hold_bp.route('/api/desks/hold', methods=['POST'])
 def put_desk_on_hold():
     """
     Put a desk on hold for a specific user and slot

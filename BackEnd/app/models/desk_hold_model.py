@@ -39,7 +39,7 @@ class DeskHold:
                 INSERT INTO sena.booking_transactions 
                 (user_id, desk_id, slot_id, status)
                 VALUES (%s, %s, %s, 'held')
-                RETURNING user_id, desk_id, slot_id, status
+                RETURNING id, user_id, desk_id, slot_id, status
             """, (user_id, desk_id, slot_id))
             
             conn.commit()
@@ -48,10 +48,11 @@ class DeskHold:
             return {
                 "message": "Desk put on hold successfully",
                 "booking": {
-                    "user_id": result[0],
-                    "desk_id": result[1],
-                    "slot_id": result[2],
-                    "status": result[3]
+                    "booking_id": result[0],
+                    "user_id": result[1],
+                    "desk_id": result[2],
+                    "slot_id": result[3],
+                    "status": result[4]
                 }
             }, 201
 
@@ -77,7 +78,7 @@ class DeskHold:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT bt.user_id, bt.status, u.email
+                SELECT bt.id, bt.user_id, bt.status, u.email
                 FROM sena.booking_transactions bt
                 JOIN sena.users u ON bt.user_id = u.id
                 WHERE bt.desk_id = %s AND bt.slot_id = %s 
@@ -95,10 +96,11 @@ class DeskHold:
             return {
                 "is_held": True,
                 "held_by": {
-                    "user_id": hold_info[0],
-                    "email": hold_info[2]
+                    "booking_id": hold_info[0],
+                    "user_id": hold_info[1],
+                    "email": hold_info[3]
                 },
-                "status": hold_info[1]
+                "status": hold_info[2]
             }, 200
 
         except Exception as e:
