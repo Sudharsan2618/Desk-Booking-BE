@@ -197,7 +197,7 @@
     </div>
 
     <script>
-        const socket = io('http://localhost:5000', {
+        const socket = io('https://desk-booking-be.onrender.com', {
             reconnection: true,
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,
@@ -243,9 +243,9 @@
         async function fetchMasterData() {
             try {
                 const [locationsRes, deskTypesRes, slotsRes] = await Promise.all([
-                    fetch('http://localhost:5000/api/master-data/locations'),
-                    fetch('http://localhost:5000/api/master-data/desk-types'),
-                    fetch('http://localhost:5000/api/master-data/slots') // Fetch slot types
+                    fetch('https://desk-booking-be.onrender.com/api/master-data/locations'),
+                    fetch('https://desk-booking-be.onrender.com/api/master-data/desk-types'),
+                    fetch('https://desk-booking-be.onrender.com/api/master-data/slots') // Fetch slot types
                 ]);
 
                 const locationsData = await locationsRes.json();

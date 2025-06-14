@@ -2,6 +2,7 @@ from typing import Dict, List, Tuple, Optional
 from app.utils.db_utils import get_db_connection
 from app.config.database import DB_CONFIG
 import json
+import uuid
 
 class DeskData:
     @staticmethod
@@ -183,5 +184,45 @@ class DeskData:
         except Exception as e:
             print(f"[DeskData ERROR] Failed to fetch desk data: {str(e)}")
             return {"error": f"Failed to fetch desk data: {str(e)}"}, 500
+        finally:
+            conn.close()
+
+    @staticmethod
+    def hold_desk_slot(user_id: str, desk_id: int, slot_id: int) -> Tuple[Dict, int]:
+        """
+        Puts a desk slot on hold in the booking_transactions table.
+        Args:
+            user_id (str): UUID of the user.
+            desk_id (int): ID of the desk.
+            slot_id (int): ID of the slot.
+        Returns: Tuple of (response_dict, status_code)
+        """
+        conn = get_db_connection(DB_CONFIG)
+        if not conn:
+            return {"error": "Database connection failed"}, 500
+
+        try:
+            cursor = conn.cursor()
+            status = "held" # Default status for holding
+
+            # Assuming the booking_transactions table has: id (SERIAL), user_id, desk_id, slot_id, status
+            # We omit 'id' in the INSERT statement as it's SERIAL and auto-generated
+            insert_query = """
+                INSERT INTO sena.booking_transactions(
+                    user_id, desk_id, slot_id, status)
+                VALUES (%s, %s, %s, %s);
+            """
+            cursor.execute(insert_query, (user_id, desk_id, slot_id, status))
+            conn.commit()
+            
+            # If you need the generated ID, you can fetch it after commit
+            # For SERIAL, use: new_id = cursor.fetchone()[0] after RETURNING id; in the query
+            
+            return {"message": "Desk slot held successfully"}, 201
+
+        except Exception as e:
+            conn.rollback()
+            print(f"[ERROR] Failed to hold desk slot: {str(e)}")
+            return {"error": f"Failed to hold desk slot: {str(e)}"}, 500
         finally:
             conn.close() 

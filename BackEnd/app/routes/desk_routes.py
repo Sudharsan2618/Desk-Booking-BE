@@ -24,10 +24,10 @@ def background_desk_updates():
                         slot_type_ids=filters.get('slot_type_ids'),
                         booking_date=filters.get('booking_date')
                     )
-                    print(f"[Background Task] Fetched desk data for {client_id}: {desk_data}, Status: {status_code}")
+                    # print(f"[Background Task] Fetched desk data for {client_id}: {desk_data}, Status: {status_code}")
                     if status_code == 200:
                         socketio.emit('desk_update', desk_data, room=client_id)
-                        print(f"[Background Task] Emitted desk_update event to {client_id}.")
+                        # print(f"[Background Task] Emitted desk_update event to {client_id}.")
                 except Exception as e:
                     print(f"Error in background task for client {client_id}: {str(e)}")
         time.sleep(5)  # Update every 5 seconds
@@ -109,3 +109,33 @@ def get_desks():
 
     desk_data, status_code = DeskData.get_desk_availability(location_ids=location_ids, desk_type_ids=desk_type_ids, slot_type_ids=slot_type_ids, booking_date=booking_date)
     return jsonify(desk_data), status_code 
+
+@desk_bp.route('/api/desks/held', methods=['POST'])
+def hold_desk():
+    """
+    API endpoint to put a desk slot on hold.
+    Expects JSON payload with user_id, desk_id, slot_id.
+    """
+    try:
+        data = request.get_json()
+        user_id = data.get('user_id')
+        desk_id = data.get('desk_id')
+        slot_id = data.get('slot_id')
+
+        # Basic validation
+        if not all([user_id, desk_id, slot_id]):
+            return jsonify({"error": "Missing required fields: user_id, desk_id, slot_id"}), 400
+        
+        # Type conversion (ensure desk_id and slot_id are integers)
+        try:
+            desk_id = int(desk_id)
+            slot_id = int(slot_id)
+        except ValueError:
+            return jsonify({"error": "desk_id and slot_id must be integers"}), 400
+
+        response, status_code = DeskData.hold_desk_slot(user_id, desk_id, slot_id)
+        return jsonify(response), status_code
+
+    except Exception as e:
+        print(f"[API ERROR] Failed to process hold desk request: {str(e)}")
+        return jsonify({"error": f"Failed to process request: {str(e)}"}), 500 
