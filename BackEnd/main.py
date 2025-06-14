@@ -1,9 +1,3 @@
-import gevent.monkey
-gevent.monkey.patch_all()
-
-import psycogreen.gevent
-psycogreen.gevent.patch_psycopg()
-
 from flask import Flask, jsonify
 from flask_cors import CORS
 from app.routes.auth_routes import auth_bp
@@ -42,6 +36,4 @@ def handle_unexpected_error(e):
     return jsonify(response), 500
 
 if __name__ == '__main__':
-    # In a production environment with Gunicorn, socketio.run() should not be called directly.
-    # Gunicorn will manage the application, and Flask-SocketIO integrates with the WSGI app.
-    pass
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
