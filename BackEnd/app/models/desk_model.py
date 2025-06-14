@@ -107,7 +107,7 @@ class DeskData:
                 return {"desks": []}, 200
 
             # Parse the JSON string from PostgreSQL
-            desks_data = json.loads(result[0])
+            desks_data = result[0]
             return {"desks": desks_data}, 200
 
         except Exception as e:
