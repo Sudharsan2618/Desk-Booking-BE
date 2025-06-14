@@ -20,7 +20,7 @@ class DeskBooking:
             
             # First check if the booking exists and is on hold
             cursor.execute("""
-                SELECT user_id, desk_id, slot_id, status
+                SELECT user_id, desk_id, slot_id, status, booking_details
                 FROM sena.booking_transactions 
                 WHERE id = %s
             """, (booking_id,))
@@ -41,7 +41,7 @@ class DeskBooking:
                 UPDATE sena.booking_transactions 
                 SET status = 'booked'
                 WHERE id = %s
-                RETURNING id, user_id, desk_id, slot_id, status
+                RETURNING id, user_id, desk_id, slot_id, status, booking_details
             """, (booking_id,))
             
             conn.commit()
@@ -54,7 +54,8 @@ class DeskBooking:
                     "user_id": result[1],
                     "desk_id": result[2],
                     "slot_id": result[3],
-                    "status": result[4]
+                    "status": result[4],
+                    "booking_details": result[5]
                 }
             }, 200
 

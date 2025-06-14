@@ -103,8 +103,7 @@ class DeskHold:
                     "user_id": result[1],
                     "desk_id": result[2],
                     "slot_id": result[3],
-                    "status": result[4],
-                    "booking_details": booking_details
+                    "status": result[4]
                 }
             }, 201
 
