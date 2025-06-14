@@ -43,6 +43,31 @@
             color: white;
         }
 
+        .filters {
+            background-color: #fff;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .filter-group label {
+            margin-right: 10px;
+            font-weight: bold;
+            color: #555;
+        }
+
+        .filter-group select {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            min-width: 150px;
+        }
+
         .desks-grid {
             display: grid;
             grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -135,10 +160,30 @@
                 Connection Status: 
                 <span id="connectionStatus" class="connection-status disconnected">Disconnected</span>
             </div>
-            <div style="margin-top: 15px;">
-                <label for="selectedDate">Select Date:</label>
-                <input type="date" id="selectedDate">
-                <button id="loadDataButton">Load Data for Date</button>
+        </div>
+
+        <div class="filters">
+            <div class="filter-group">
+                <label for="locationFilter">Location:</label>
+                <select id="locationFilter" multiple>
+                    <!-- Options will be dynamically loaded -->
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="deskTypeFilter">Desk Type:</label>
+                <select id="deskTypeFilter" multiple>
+                    <!-- Options will be dynamically loaded -->
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="slotTypeFilter">Slot Type:</label>
+                <select id="slotTypeFilter" multiple>
+                    <!-- Options will be dynamically loaded -->
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="bookingDateFilter">Booking Date:</label>
+                <input type="date" id="bookingDateFilter">
             </div>
         </div>
 
@@ -152,8 +197,7 @@
     </div>
 
     <script>
-        // Connect to WebSocket server with configuration
-        const socket = io('https://desk-booking-be.onrender.com', {
+        const socket = io('http://localhost:5000', {
             reconnection: true,
             reconnectionAttempts: 5,
             reconnectionDelay: 1000,
@@ -162,28 +206,99 @@
         const desksContainer = document.getElementById('desksContainer');
         const connectionStatus = document.getElementById('connectionStatus');
         const lastUpdate = document.getElementById('lastUpdate');
-        const selectedDateInput = document.getElementById('selectedDate');
-        const loadDataButton = document.getElementById('loadDataButton');
+        const locationFilter = document.getElementById('locationFilter');
+        const deskTypeFilter = document.getElementById('deskTypeFilter');
+        const slotTypeFilter = document.getElementById('slotTypeFilter');
+        const bookingDateFilter = document.getElementById('bookingDateFilter');
 
-        // Set default date to today
-        selectedDateInput.value = new Date().toISOString().split('T')[0];
+        let currentFilters = {
+            location_ids: [],
+            desk_type_ids: [],
+            slot_type_ids: [],
+            booking_date: null
+        };
 
-        // Event listener for the Load Data button
-        loadDataButton.addEventListener('click', () => {
-            const dateToSend = selectedDateInput.value;
-            if (dateToSend) {
-                console.log('Requesting desk data for date:', dateToSend);
-                socket.emit('request_desk_update_by_date', { date: dateToSend });
-            } else {
-                alert('Please select a date.');
+        // Function to get selected options from a multiple select dropdown
+        function getSelectedOptions(selectElement) {
+            return Array.from(selectElement.selectedOptions).map(option => option.value);
+        }
+
+        // Function to emit filter changes to the server
+        function emitFilterChanges() {
+            currentFilters.location_ids = getSelectedOptions(locationFilter);
+            currentFilters.desk_type_ids = getSelectedOptions(deskTypeFilter);
+            currentFilters.slot_type_ids = getSelectedOptions(slotTypeFilter);
+            currentFilters.booking_date = bookingDateFilter.value || null; // Get date value, or null if empty
+            console.log('Emitting filter change:', currentFilters);
+            socket.emit('filter_update', currentFilters);
+        }
+
+        // Event listeners for filter changes
+        locationFilter.addEventListener('change', emitFilterChanges);
+        deskTypeFilter.addEventListener('change', emitFilterChanges);
+        slotTypeFilter.addEventListener('change', emitFilterChanges);
+        bookingDateFilter.addEventListener('change', emitFilterChanges);
+
+        // Fetch master data (locations, desk types, and slot types) on page load
+        async function fetchMasterData() {
+            try {
+                const [locationsRes, deskTypesRes, slotsRes] = await Promise.all([
+                    fetch('http://localhost:5000/api/master-data/locations'),
+                    fetch('http://localhost:5000/api/master-data/desk-types'),
+                    fetch('http://localhost:5000/api/master-data/slots')
+                ]);
+
+                const locationsData = await locationsRes.json();
+                const deskTypesData = await deskTypesRes.json();
+                const slotsData = await slotsRes.json(); // Get slot types data
+
+                // Populate location filter
+                if (locationsData.locations) {
+                    locationFilter.innerHTML = '<option value="">All Locations</option>'; // Add a default option
+                    locationsData.locations.forEach(loc => {
+                        const option = document.createElement('option');
+                        option.value = loc.location_id;
+                        option.textContent = loc.location_name;
+                        locationFilter.appendChild(option);
+                    });
+                }
+
+                // Populate desk type filter
+                if (deskTypesData.desk_types) {
+                    deskTypeFilter.innerHTML = '<option value="">All Desk Types</option>'; // Add a default option
+                    deskTypesData.desk_types.forEach(type => {
+                        const option = document.createElement('option');
+                        option.value = type.desk_type_id;
+                        option.textContent = type.desk_type;
+                        deskTypeFilter.appendChild(option);
+                    });
+                }
+
+                // Populate slot type filter
+                if (slotsData.slots) {
+                    slotTypeFilter.innerHTML = '<option value="">All Slot Types</option>'; // Add a default option
+                    slotsData.slots.forEach(slot => {
+                        const option = document.createElement('option');
+                        option.value = slot.slot_id;
+                        option.textContent = slot.slot_type;
+                        slotTypeFilter.appendChild(option);
+                    });
+                }
+            } catch (error) {
+                console.error('Error fetching master data:', error);
             }
-        });
+        }
+
+        // Initial fetch of master data
+        fetchMasterData();
 
         // Connection event handlers
         socket.on('connect', () => {
             console.log('Connected to WebSocket');
             connectionStatus.textContent = 'Connected';
             connectionStatus.className = 'connection-status connected';
+            // Emit current filters on connect/reconnect to get initial data with filters applied
+            emitFilterChanges();
         });
 
         socket.on('disconnect', () => {
@@ -208,6 +323,7 @@
             console.log('Reconnected after', attemptNumber, 'attempts');
             connectionStatus.textContent = 'Connected';
             connectionStatus.className = 'connection-status connected';
+            emitFilterChanges(); // Re-emit filters on successful reconnection
         });
 
         // Handle desk updates
@@ -222,13 +338,19 @@
         });
 
         function updateDesksDisplay(desks) {
+            console.log('updateDesksDisplay called with', desks.length, 'desks.');
             desksContainer.innerHTML = ''; // Clear existing desks
+
+            if (desks.length === 0) {
+                desksContainer.innerHTML = '<p style="text-align: center; width: 100%; color: #888;">No desks found for the selected filters.</p>';
+                console.log('No desks found, displaying message.');
+                return;
+            }
 
             desks.forEach(desk => {
                 const deskCard = document.createElement('div');
                 deskCard.className = 'desk-card';
 
-                // Create desk header
                 const deskHeader = document.createElement('div');
                 deskHeader.className = 'desk-header';
                 deskHeader.innerHTML = `
@@ -236,7 +358,6 @@
                     <span class="desk-status status-${desk.desk_status.toLowerCase()}">${desk.desk_status}</span>
                 `;
 
-                // Create desk details
                 const deskDetails = document.createElement('div');
                 deskDetails.className = 'desk-details';
                 deskDetails.innerHTML = `
@@ -246,7 +367,6 @@
                     <div class="detail-item">City: ${desk.city}</div>
                 `;
 
-                // Create slots container
                 const slotsContainer = document.createElement('div');
                 slotsContainer.className = 'slots-container';
                 
@@ -264,23 +384,19 @@
                     slotsContainer.innerHTML = '<div class="detail-item">No slots available</div>';
                 }
 
-                // Assemble desk card
                 deskCard.appendChild(deskHeader);
                 deskCard.appendChild(deskDetails);
                 deskCard.appendChild(slotsContainer);
 
-                // Add to container
                 desksContainer.appendChild(deskCard);
+                console.log('Appended deskCard for', desk.desk_name);
             });
+            console.log('Finished updating desk display.');
         }
 
-        // Error handling
+        // Error handling (general for WebSocket, connect_error is handled above)
         socket.on('error', (error) => {
             console.error('WebSocket error:', error);
-        });
-
-        socket.on('connect_error', (error) => {
-            console.error('Connection error:', error);
         });
     </script>
 </body>
