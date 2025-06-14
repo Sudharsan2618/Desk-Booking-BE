@@ -199,9 +199,11 @@
     <script>
         const socket = io('http://localhost:5000', {
             reconnection: true,
-            reconnectionAttempts: 5,
+            reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,
-            timeout: 10000
+            reconnectionDelayMax: 5000,
+            timeout: 20000,
+            transports: ['websocket', 'polling']
         });
         const desksContainer = document.getElementById('desksContainer');
         const connectionStatus = document.getElementById('connectionStatus');
@@ -393,6 +395,13 @@
             });
             console.log('Finished updating desk display.');
         }
+
+        // Add heartbeat to keep connection alive
+        setInterval(() => {
+            if (socket.connected) {
+                socket.emit('ping');
+            }
+        }, 30000);
 
         // Error handling (general for WebSocket, connect_error is handled above)
         socket.on('error', (error) => {

@@ -17,7 +17,7 @@ def background_desk_updates():
     """
     while True:
         if connected_clients:
-            for client_id, filters in list(connected_clients.items()): # Iterate over a copy to avoid modification issues
+            for client_id, filters in list(connected_clients.items()):
                 try:
                     desk_data, status_code = DeskData.get_desk_availability(
                         location_ids=filters.get('location_ids'), 
@@ -25,18 +25,21 @@ def background_desk_updates():
                         slot_type_ids=filters.get('slot_type_ids'),
                         booking_date=filters.get('booking_date')
                     )
-                    # print(f"[Background Task] Fetched desk data for {client_id}: {desk_data}, Status: {status_code}")
                     if status_code == 200:
-                        print(f"[Background Task] Attempting to emit desk_update event to {client_id}.")
+                        print(f"[Background Task] Emitting desk_update to {client_id}")
                         socketio.emit('desk_update', desk_data, room=client_id)
-                        print(f"[Background Task] Successfully emitted desk_update event to {client_id}.")
                 except Exception as e:
                     print(f"Error in background task for client {client_id}: {str(e)}")
-        gevent.sleep(5)  # Update every 5 seconds
+        time.sleep(5)  # Use time.sleep instead of gevent.sleep
 
-# Start background task
-# Using gevent.spawn for background tasks to ensure compatibility with gevent's monkey patching
-gevent.spawn(background_desk_updates)
+# Start background task in a separate thread
+def start_background_task():
+    thread = threading.Thread(target=background_desk_updates)
+    thread.daemon = True
+    thread.start()
+
+# Start the background task when the module is loaded
+start_background_task()
 
 @socketio.on('connect')
 def handle_connect():
