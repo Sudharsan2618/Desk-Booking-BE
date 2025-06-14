@@ -9,7 +9,14 @@ from app.routes.desk_booking_routes import desk_booking_bp
 from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
-CORS(app)
+# Configure CORS with more specific settings
+CORS(app, resources={
+    r"/api/*": {
+        "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],  # Add your frontend URL
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 # Register blueprints
 app.register_blueprint(auth_bp)

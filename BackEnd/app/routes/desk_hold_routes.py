@@ -1,7 +1,9 @@
 from flask import Blueprint, jsonify, request
+from flask_cors import CORS
 from app.models.desk_hold_model import DeskHold
 
 desk_hold_bp = Blueprint('desk_hold', __name__)
+CORS(desk_hold_bp)  # Enable CORS for this blueprint
 
 @desk_hold_bp.route('/api/desks/hold', methods=['POST'])
 def put_desk_on_hold():
