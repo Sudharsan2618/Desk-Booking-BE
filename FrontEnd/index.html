@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Desk Booking - Real-time Availability</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.4/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+
+        .connection-status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 4px;
+            margin-left: 10px;
+        }
+
+        .connected {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        .disconnected {
+            background-color: #f44336;
+            color: white;
+        }
+
+        .desks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .desk-card {
+            background-color: #fff;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .desk-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .desk-name {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .desk-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .status-available {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        .status-booked {
+            background-color: #f44336;
+            color: white;
+        }
+
+        .status-held {
+            background-color: #FFC107;
+            color: black;
+        }
+
+        .desk-details {
+            margin-bottom: 15px;
+        }
+
+        .detail-item {
+            margin: 5px 0;
+            color: #666;
+        }
+
+        .slots-container {
+            margin-top: 15px;
+        }
+
+        .slot-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .slot-time {
+            color: #666;
+        }
+
+        .slot-price {
+            font-weight: bold;
+            color: #2196F3;
+        }
+
+        .last-update {
+            text-align: center;
+            color: #666;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Desk Booking System</h1>
+            <div>
+                Connection Status: 
+                <span id="connectionStatus" class="connection-status disconnected">Disconnected</span>
+            </div>
+            <div style="margin-top: 15px;">
+                <label for="selectedDate">Select Date:</label>
+                <input type="date" id="selectedDate">
+                <button id="loadDataButton">Load Data for Date</button>
+            </div>
+        </div>
+
+        <div id="desksContainer" class="desks-grid">
+            <!-- Desk cards will be dynamically inserted here -->
+        </div>
+
+        <div id="lastUpdate" class="last-update">
+            Last updated: Never
+        </div>
+    </div>
+
+    <script>
+        // Connect to WebSocket server with configuration
+        const socket = io('http://localhost:5000', {
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000,
+            timeout: 10000
+        });
+        const desksContainer = document.getElementById('desksContainer');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const lastUpdate = document.getElementById('lastUpdate');
+        const selectedDateInput = document.getElementById('selectedDate');
+        const loadDataButton = document.getElementById('loadDataButton');
+
+        // Set default date to today
+        selectedDateInput.value = new Date().toISOString().split('T')[0];
+
+        // Event listener for the Load Data button
+        loadDataButton.addEventListener('click', () => {
+            const dateToSend = selectedDateInput.value;
+            if (dateToSend) {
+                console.log('Requesting desk data for date:', dateToSend);
+                socket.emit('request_desk_update_by_date', { date: dateToSend });
+            } else {
+                alert('Please select a date.');
+            }
+        });
+
+        // Connection event handlers
+        socket.on('connect', () => {
+            console.log('Connected to WebSocket');
+            connectionStatus.textContent = 'Connected';
+            connectionStatus.className = 'connection-status connected';
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from WebSocket');
+            connectionStatus.textContent = 'Disconnected';
+            connectionStatus.className = 'connection-status disconnected';
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+            connectionStatus.textContent = 'Connection Error';
+            connectionStatus.className = 'connection-status disconnected';
+        });
+
+        socket.on('reconnect_attempt', (attemptNumber) => {
+            console.log('Reconnection attempt:', attemptNumber);
+            connectionStatus.textContent = `Reconnecting (${attemptNumber})...`;
+            connectionStatus.className = 'connection-status disconnected';
+        });
+
+        socket.on('reconnect', (attemptNumber) => {
+            console.log('Reconnected after', attemptNumber, 'attempts');
+            connectionStatus.textContent = 'Connected';
+            connectionStatus.className = 'connection-status connected';
+        });
+
+        // Handle desk updates
+        socket.on('desk_update', (data) => {
+            console.log('Received desk update:', data);
+            if (data && data.desks) {
+                updateDesksDisplay(data.desks);
+                lastUpdate.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+            } else {
+                console.error('Invalid desk data received:', data);
+            }
+        });
+
+        function updateDesksDisplay(desks) {
+            desksContainer.innerHTML = ''; // Clear existing desks
+
+            desks.forEach(desk => {
+                const deskCard = document.createElement('div');
+                deskCard.className = 'desk-card';
+
+                // Create desk header
+                const deskHeader = document.createElement('div');
+                deskHeader.className = 'desk-header';
+                deskHeader.innerHTML = `
+                    <span class="desk-name">${desk.desk_name}</span>
+                    <span class="desk-status status-${desk.desk_status.toLowerCase()}">${desk.desk_status}</span>
+                `;
+
+                // Create desk details
+                const deskDetails = document.createElement('div');
+                deskDetails.className = 'desk-details';
+                deskDetails.innerHTML = `
+                    <div class="detail-item">Building: ${desk.building_name}</div>
+                    <div class="detail-item">Floor: ${desk.floor_number}</div>
+                    <div class="detail-item">Capacity: ${desk.capacity}</div>
+                    <div class="detail-item">City: ${desk.city}</div>
+                `;
+
+                // Create slots container
+                const slotsContainer = document.createElement('div');
+                slotsContainer.className = 'slots-container';
+                
+                if (desk.slots && desk.slots.length > 0) {
+                    desk.slots.forEach(slot => {
+                        const slotItem = document.createElement('div');
+                        slotItem.className = 'slot-item';
+                        slotItem.innerHTML = `
+                            <span class="slot-time">${slot.start_time} - ${slot.end_time}</span>
+                            <span class="slot-price">$${slot.price || 'N/A'}</span>
+                        `;
+                        slotsContainer.appendChild(slotItem);
+                    });
+                } else {
+                    slotsContainer.innerHTML = '<div class="detail-item">No slots available</div>';
+                }
+
+                // Assemble desk card
+                deskCard.appendChild(deskHeader);
+                deskCard.appendChild(deskDetails);
+                deskCard.appendChild(slotsContainer);
+
+                // Add to container
+                desksContainer.appendChild(deskCard);
+            });
+        }
+
+        // Error handling
+        socket.on('error', (error) => {
+            console.error('WebSocket error:', error);
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
+        });
+    </script>
+</body>
+</html> 
