@@ -2,7 +2,7 @@ import gevent.monkey
 gevent.monkey.patch_all()
 
 import psycogreen.gevent
-psycogreen.gevent.make_patch_psycopg()
+psycogreen.gevent.patch_psycopg()
 
 from flask import Flask, jsonify
 from flask_cors import CORS
