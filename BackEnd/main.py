@@ -4,6 +4,7 @@ from app.routes.auth_routes import auth_bp
 from app.routes.signup_routes import signup_bp
 from app.routes.master_data_routes import master_data_bp
 from app.routes.desk_routes import desk_bp, socketio
+from app.routes.desk_hold_routes import desk_hold_bp
 from werkzeug.exceptions import HTTPException
 
 app = Flask(__name__)
@@ -14,6 +15,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(signup_bp)
 app.register_blueprint(master_data_bp)
 app.register_blueprint(desk_bp)
+app.register_blueprint(desk_hold_bp)
 
 # Initialize SocketIO
 socketio.init_app(app, cors_allowed_origins="*")
