@@ -1,6 +1,7 @@
 from typing import Dict, Tuple
 from app.utils.db_utils import get_db_connection
 from app.config.database import DB_CONFIG
+import json
 
 class DeskHold:
     @staticmethod
@@ -80,14 +81,17 @@ class DeskHold:
             """, (slot_id, user_id, desk_id))
             
             booking_details = cursor.fetchone()[0]
+            
+            # Convert the booking details to a JSON string
+            booking_details_json = json.dumps(booking_details)
 
             # Insert the hold transaction with booking details
             cursor.execute("""
                 INSERT INTO sena.booking_transactions 
                 (user_id, desk_id, slot_id, status, booking_details)
-                VALUES (%s, %s, %s, 'held', %s)
+                VALUES (%s, %s, %s, 'held', %s::jsonb)
                 RETURNING id, user_id, desk_id, slot_id, status
-            """, (user_id, desk_id, slot_id, booking_details))
+            """, (user_id, desk_id, slot_id, booking_details_json))
             
             conn.commit()
             result = cursor.fetchone()
