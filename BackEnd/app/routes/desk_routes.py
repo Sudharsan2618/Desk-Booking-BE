@@ -3,6 +3,7 @@ from flask_socketio import SocketIO, emit
 from app.models.desk_model import DeskData
 import threading
 import time
+import gevent
 
 desk_bp = Blueprint('desk', __name__)
 socketio = SocketIO()
@@ -26,15 +27,16 @@ def background_desk_updates():
                     )
                     # print(f"[Background Task] Fetched desk data for {client_id}: {desk_data}, Status: {status_code}")
                     if status_code == 200:
+                        print(f"[Background Task] Attempting to emit desk_update event to {client_id}.")
                         socketio.emit('desk_update', desk_data, room=client_id)
-                        # print(f"[Background Task] Emitted desk_update event to {client_id}.")
+                        print(f"[Background Task] Successfully emitted desk_update event to {client_id}.")
                 except Exception as e:
                     print(f"Error in background task for client {client_id}: {str(e)}")
-        time.sleep(5)  # Update every 5 seconds
+        gevent.sleep(5)  # Update every 5 seconds
 
 # Start background task
-update_thread = threading.Thread(target=background_desk_updates, daemon=True)
-update_thread.start()
+# Using gevent.spawn for background tasks to ensure compatibility with gevent's monkey patching
+gevent.spawn(background_desk_updates)
 
 @socketio.on('connect')
 def handle_connect():
@@ -48,10 +50,11 @@ def handle_connect():
     
     # Send initial desk data (without filters initially, filters will be applied via filter_update event)
     desk_data, status_code = DeskData.get_desk_availability()
-    print(f"[Initial Connect] Fetched desk data for {client_id}: {desk_data}, Status: {status_code}")
+    # print(f"[Initial Connect] Fetched desk data for {client_id}: {desk_data}, Status: {status_code}")
     if status_code == 200:
+        print(f"[Initial Connect] Attempting to emit initial desk_update event to {client_id}.")
         emit('desk_update', desk_data, room=client_id)
-        print(f"[Initial Connect] Emitted desk_update event to {client_id}.")
+        print(f"[Initial Connect] Successfully emitted initial desk_update event to {client_id}.")
 
 @socketio.on('disconnect')
 def handle_disconnect():
@@ -80,8 +83,9 @@ def handle_filter_update(filters):
             booking_date=filters.get('booking_date')
         )
         if status_code == 200:
+            print(f"[Filter Update] Attempting to emit filtered desk_update to {client_id}.")
             emit('desk_update', desk_data, room=client_id)
-            print(f"Emitted filtered desk_update to {client_id}.")
+            print(f"[Filter Update] Successfully emitted filtered desk_update to {client_id}.")
 
 @desk_bp.route('/api/desks', methods=['GET'])
 def get_desks():
