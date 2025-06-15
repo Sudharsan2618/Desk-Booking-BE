@@ -34,10 +34,15 @@ def get_desk_hold_status(desk_id, slot_id):
     result, status_code = DeskHold.get_desk_hold_status(desk_id, slot_id)
     return jsonify(result), status_code
 
-@desk_hold_bp.route('/api/desks/hold/<int:booking_id>', methods=['DELETE'])
-def delete_held_booking(booking_id):
+@desk_hold_bp.route('/api/desks/hold', methods=['DELETE'])
+def delete_held_booking():
     """
     Delete a held booking transaction by its ID
     """
+    data = request.get_json()
+    if not data or 'booking_id' not in data:
+        return jsonify({"error": "No booking_id provided in request body"}), 400
+    
+    booking_id = data['booking_id']
     result, status_code = DeskHold.delete_held_booking(booking_id)
     return jsonify(result), status_code 

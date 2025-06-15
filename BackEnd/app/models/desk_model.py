@@ -54,17 +54,14 @@ class DeskData:
                 desk_details_where_clause = "WHERE " + " AND ".join(desk_details_conditions)
 
             # --- Slot Booking Status Filter (bt.updated_at::date) ---
-            # This parameter (booking_date) will be added to query_params after desk_details_conditions
             booking_date_condition_sql = "bt.updated_at::date = CURRENT_DATE" # Default to current date if not provided
             if booking_date:
                 booking_date_condition_sql = "bt.updated_at::date = %s"
-                query_params.append(booking_date) # Add the parameter here
+                query_params.append(booking_date)
 
             # --- All Relevant Slots Filter (sm.id) ---
-            # This parameter (slot_type_ids) will be added to query_params after booking_date
             all_relevant_slots_conditions = ["sm.is_active = true"]
             if slot_type_ids:
-                # Ensure conversion to int only for non-empty strings
                 filtered_slot_type_ids = []
                 for st_id in slot_type_ids:
                     if st_id:
@@ -74,12 +71,11 @@ class DeskData:
                             print(f"[Debug DeskData] Invalid slot_type_id found: {st_id}") # Debug log
                             continue
                 print(f"[Debug DeskData] filtered_slot_type_ids: {filtered_slot_type_ids}") # Debug log
-                if filtered_slot_type_ids: # Only add condition if there are actual slot type IDs
+                if filtered_slot_type_ids:
                     all_relevant_slots_conditions.append("sm.id IN %s")
-                    query_params.append(tuple(filtered_slot_type_ids)) # Add the parameter here
+                    query_params.append(tuple(filtered_slot_type_ids))
 
             all_relevant_slots_where_clause = "WHERE " + " AND ".join(all_relevant_slots_conditions)
-
 
             sql_query = f"""
                 WITH desk_details AS (
@@ -90,6 +86,7 @@ class DeskData:
                         d.capacity,
                         d.description,
                         d.status AS desk_status,
+                        d.rating,
                         b.name AS building_name,
                         b.address AS building_address,
                         b.amenities,
@@ -141,6 +138,7 @@ class DeskData:
                             'capacity', dd.capacity,
                             'description', dd.description,
                             'desk_status', dd.desk_status,
+                            'rating', dd.rating,
                             'building_name', dd.building_name,
                             'building_address', dd.building_address,
                             'amenities', dd.amenities,
@@ -157,9 +155,10 @@ class DeskData:
                                         'status', COALESCE(sbs.slot_status, 'available'),
                                         'price', dp.price
                                     )
+                                    ORDER BY dp.price ASC NULLS LAST
                                 )
                                 FROM all_relevant_slots AS ars
-                                CROSS JOIN desk_details AS d_cross_join -- Use desk_details here to ensure correct desk_type_id for pricing
+                                CROSS JOIN desk_details AS d_cross_join
                                 LEFT JOIN slot_booking_status AS sbs 
                                     ON sbs.desk_id = d_cross_join.desk_id AND sbs.slot_id = ars.slot_id
                                 LEFT JOIN desk_pricing AS dp 
@@ -167,6 +166,9 @@ class DeskData:
                                 WHERE d_cross_join.desk_id = dd.desk_id
                             )
                         )
+                        ORDER BY 
+                            COALESCE(dd.rating, 0) DESC,
+                            (SELECT MIN(dp.price) FROM desk_pricing dp WHERE dp.desk_type_id = dd.desk_type_id) ASC NULLS LAST
                     ) AS desks_json
                 FROM desk_details AS dd;
             """
@@ -224,5 +226,54 @@ class DeskData:
             conn.rollback()
             print(f"[ERROR] Failed to hold desk slot: {str(e)}")
             return {"error": f"Failed to hold desk slot: {str(e)}"}, 500
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_user_bookings(user_id: str) -> Tuple[Dict, int]:
+        """
+        Get all bookings for a specific user
+        Args:
+            user_id: UUID of the user
+        Returns: Tuple of (response_dict, status_code)
+        """
+        conn = get_db_connection(DB_CONFIG)
+        if not conn:
+            return {"error": "Database connection failed"}, 500
+
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT 
+                    id,
+                    booking_details,
+                    updated_at,
+                    status
+                FROM sena.booking_transactions
+                WHERE user_id = %s
+                ORDER BY updated_at DESC
+            """, (user_id,))
+            
+            bookings = cursor.fetchall()
+            
+            if not bookings:
+                return {"bookings": []}, 200
+
+            # Convert the results to a list of dictionaries
+            booking_list = []
+            for booking in bookings:
+                booking_list.append({
+                    "booking_id": booking[0],
+                    "booking_details": booking[1],
+                    "updated_at": booking[2].isoformat() if booking[2] else None,
+                    "status": booking[3]
+                })
+
+            return {"bookings": booking_list}, 200
+
+        except Exception as e:
+            print(f"[DeskData ERROR] Failed to fetch user bookings: {str(e)}")
+            return {"error": f"Failed to fetch user bookings: {str(e)}"}, 500
         finally:
             conn.close() 

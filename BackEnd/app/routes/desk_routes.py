@@ -146,3 +146,17 @@ def hold_desk():
     except Exception as e:
         print(f"[API ERROR] Failed to process hold desk request: {str(e)}")
         return jsonify({"error": f"Failed to process request: {str(e)}"}), 500 
+
+@desk_bp.route('/api/desks/user-bookings', methods=['GET'])
+def get_user_bookings():
+    """
+    Get all bookings for a specific user
+    Query Parameters:
+        user_id: UUID of the user
+    """
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({"error": "User ID is required as query parameter"}), 400
+        
+    result, status_code = DeskData.get_user_bookings(user_id)
+    return jsonify(result), status_code 
