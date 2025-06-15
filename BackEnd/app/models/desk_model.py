@@ -29,34 +29,30 @@ class DeskData:
             desk_details_conditions = []
             if location_ids:
                 filtered_location_ids = [loc_id for loc_id in location_ids if loc_id]
-                print(f"[Debug DeskData] filtered_location_ids: {filtered_location_ids}") # Debug log
-                if filtered_location_ids: # Only add condition if there are actual location IDs
+                if filtered_location_ids:
                     desk_details_conditions.append("l.id IN %s")
                     query_params.append(tuple(filtered_location_ids))
             
             if desk_type_ids:
-                # Ensure conversion to int only for non-empty strings
                 filtered_desk_type_ids = []
                 for dt_id in desk_type_ids:
                     if dt_id:
                         try:
                             filtered_desk_type_ids.append(int(dt_id))
                         except ValueError:
-                            print(f"[Debug DeskData] Invalid desk_type_id found: {dt_id}") # Debug log
                             continue
-                print(f"[Debug DeskData] filtered_desk_type_ids: {filtered_desk_type_ids}") # Debug log
-                if filtered_desk_type_ids: # Only add condition if there are actual desk type IDs
+                if filtered_desk_type_ids:
                     desk_details_conditions.append("d.desk_type_id IN %s")
                     query_params.append(tuple(filtered_desk_type_ids))
 
-            desk_details_where_clause = "" # Initialize as empty string
+            desk_details_where_clause = ""
             if desk_details_conditions:
                 desk_details_where_clause = "WHERE " + " AND ".join(desk_details_conditions)
 
             # --- Slot Booking Status Filter (bt.updated_at::date) ---
-            booking_date_condition_sql = "bt.updated_at::date = CURRENT_DATE" # Default to current date if not provided
+            booking_date_condition_sql = "bt.booking_date = CURRENT_DATE"
             if booking_date:
-                booking_date_condition_sql = "bt.updated_at::date = %s"
+                booking_date_condition_sql = "bt.booking_date = %s"
                 query_params.append(booking_date)
 
             # --- All Relevant Slots Filter (sm.id) ---
@@ -68,9 +64,7 @@ class DeskData:
                         try:
                             filtered_slot_type_ids.append(int(st_id))
                         except ValueError:
-                            print(f"[Debug DeskData] Invalid slot_type_id found: {st_id}") # Debug log
                             continue
-                print(f"[Debug DeskData] filtered_slot_type_ids: {filtered_slot_type_ids}") # Debug log
                 if filtered_slot_type_ids:
                     all_relevant_slots_conditions.append("sm.id IN %s")
                     query_params.append(tuple(filtered_slot_type_ids))
@@ -130,54 +124,6 @@ class DeskData:
                         sm.time_zone
                     FROM sena.slot_master AS sm
                     {all_relevant_slots_where_clause}
-                ),
-                desk_aggregated_status AS (
-                    SELECT 
-                        dd.desk_id,
-                        CASE 
-                            WHEN EXISTS (
-                                SELECT 1 
-                                FROM slot_booking_status sbs 
-                                WHERE sbs.desk_id = dd.desk_id 
-                                AND sbs.slot_type = 'full_day' 
-                                AND sbs.slot_status = 'held'
-                            ) THEN 'held'
-                            WHEN EXISTS (
-                                SELECT 1 
-                                FROM slot_booking_status sbs 
-                                WHERE sbs.desk_id = dd.desk_id 
-                                AND sbs.slot_type = 'full_day' 
-                                AND sbs.slot_status = 'booked'
-                            ) THEN 'booked'
-                            WHEN EXISTS (
-                                SELECT 1 
-                                FROM slot_booking_status sbs 
-                                WHERE sbs.desk_id = dd.desk_id 
-                                AND sbs.slot_type IN ('morning', 'evening') 
-                                AND sbs.slot_status = 'booked'
-                            ) AND EXISTS (
-                                SELECT 1 
-                                FROM slot_booking_status sbs 
-                                WHERE sbs.desk_id = dd.desk_id 
-                                AND sbs.slot_type IN ('morning', 'evening') 
-                                AND sbs.slot_status = 'booked'
-                            ) THEN 'booked'
-                            WHEN EXISTS (
-                                SELECT 1 
-                                FROM slot_booking_status sbs 
-                                WHERE sbs.desk_id = dd.desk_id 
-                                AND sbs.slot_type = 'morning' 
-                                AND sbs.slot_status = 'held'
-                            ) AND EXISTS (
-                                SELECT 1 
-                                FROM slot_booking_status sbs 
-                                WHERE sbs.desk_id = dd.desk_id 
-                                AND sbs.slot_type = 'evening' 
-                                AND sbs.slot_status = 'held'
-                            ) THEN 'held'
-                            ELSE 'available'
-                        END AS aggregated_status
-                    FROM desk_details dd
                 )
                 SELECT 
                     JSON_AGG(
@@ -187,7 +133,7 @@ class DeskData:
                             'floor_number', dd.floor_number,
                             'capacity', dd.capacity,
                             'description', dd.description,
-                            'desk_status', COALESCE(das.aggregated_status, dd.desk_status),
+                            'desk_status', dd.desk_status,
                             'rating', dd.rating,
                             'building_name', dd.building_name,
                             'building_address', dd.building_address,
@@ -203,35 +149,82 @@ class DeskData:
                                         'end_time', ars.end_time,
                                         'time_zone', ars.time_zone,
                                         'status', COALESCE(sbs.slot_status, 'available'),
-                                        'price', dp.price
+                                        'price', COALESCE(dp.price, 0)
                                     )
                                     ORDER BY dp.price ASC NULLS LAST
                                 )
-                                FROM all_relevant_slots AS ars
-                                CROSS JOIN desk_details AS d_cross_join
-                                LEFT JOIN slot_booking_status AS sbs 
-                                    ON sbs.desk_id = d_cross_join.desk_id AND sbs.slot_id = ars.slot_id
-                                LEFT JOIN desk_pricing AS dp 
-                                    ON dp.desk_type_id = d_cross_join.desk_type_id AND dp.slot_id = ars.slot_id
-                                WHERE d_cross_join.desk_id = dd.desk_id
+                                FROM all_relevant_slots ars
+                                LEFT JOIN slot_booking_status sbs 
+                                    ON sbs.desk_id = dd.desk_id 
+                                    AND sbs.slot_id = ars.slot_id
+                                LEFT JOIN desk_pricing dp 
+                                    ON dp.desk_type_id = dd.desk_type_id 
+                                    AND dp.slot_id = ars.slot_id
                             )
                         )
                         ORDER BY 
                             COALESCE(dd.rating, 0) DESC,
                             (SELECT MIN(dp.price) FROM desk_pricing dp WHERE dp.desk_type_id = dd.desk_type_id) ASC NULLS LAST
                     ) AS desks_json
-                FROM desk_details AS dd
-                LEFT JOIN desk_aggregated_status AS das ON das.desk_id = dd.desk_id;
+                FROM desk_details AS dd;
             """
 
             cursor.execute(sql_query, tuple(query_params))
-            
             result = cursor.fetchone()
+            
             if not result or not result[0]:
                 return {"desks": []}, 200
 
             desks_data = result[0]
-            print(f"[DeskData] Returning {{'desks': {len(desks_data) if desks_data else 0}}}, Status: 200")
+
+            # Process the data in Python to implement the slot and desk status logic
+            for desk in desks_data:
+                if not desk.get('slots'):
+                    continue
+
+                # First, process slot statuses
+                full_day_slot = None
+                morning_slot = None
+                evening_slot = None
+
+                # Find the slots
+                for slot in desk['slots']:
+                    if slot['slot_type'].lower() == 'full day':
+                        full_day_slot = slot
+                    elif slot['slot_type'].lower() == 'morning':
+                        morning_slot = slot
+                    elif slot['slot_type'].lower() == 'evening':
+                        evening_slot = slot
+
+                # Apply slot availability rules
+                if full_day_slot and full_day_slot['status'] in ['booked', 'held']:
+                    # If full day is booked/held, make morning and evening unavailable
+                    if morning_slot:
+                        morning_slot['status'] = 'unavailable'
+                    if evening_slot:
+                        evening_slot['status'] = 'unavailable'
+                elif (morning_slot and morning_slot['status'] in ['booked', 'held']) or \
+                     (evening_slot and evening_slot['status'] in ['booked', 'held']):
+                    # If either morning or evening is booked/held, make full day unavailable
+                    if full_day_slot:
+                        full_day_slot['status'] = 'unavailable'
+
+                # Then, determine desk status based on slot statuses
+                if full_day_slot:
+                    if full_day_slot['status'] == 'booked':
+                        desk['desk_status'] = 'booked'
+                    elif full_day_slot['status'] == 'held':
+                        desk['desk_status'] = 'held'
+                elif morning_slot and evening_slot:
+                    if morning_slot['status'] == 'booked' and evening_slot['status'] == 'booked':
+                        desk['desk_status'] = 'booked'
+                    elif morning_slot['status'] == 'held' and evening_slot['status'] == 'held':
+                        desk['desk_status'] = 'held'
+                    else:
+                        desk['desk_status'] = 'available'
+                else:
+                    desk['desk_status'] = 'available'
+
             return {"desks": desks_data}, 200
 
         except Exception as e:

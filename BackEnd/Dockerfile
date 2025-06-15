@@ -12,7 +12,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
  
 # Define the command to run your app
-CMD ["gunicorn", "--bind", "0.0.0.0:5001", "--timeout", "10000", "main:app","--worker-class","uvicorn.workers.UvicornWorker"]
+# CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--timeout", "10000", "main:app"]
+CMD ["gunicorn", "--worker-class", "eventlet", "-w", "1", "--bind", "0.0.0.0:5000", "main:app"]
+
 
  
  

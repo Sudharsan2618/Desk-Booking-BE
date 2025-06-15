@@ -9,3 +9,4 @@ python-engineio==4.9.0
 eventlet==0.36.0
 greenlet==2.0.2
 setuptools==65.6.3
+eventlet==0.33.3

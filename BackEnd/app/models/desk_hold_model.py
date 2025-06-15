@@ -5,13 +5,14 @@ import json
 
 class DeskHold:
     @staticmethod
-    def put_desk_on_hold(user_id: str, desk_id: int, slot_id: int) -> Tuple[Dict, int]:
+    def put_desk_on_hold(user_id: str, desk_id: int, slot_id: int, booking_date: str) -> Tuple[Dict, int]:
         """
         Put a desk on hold for a specific user and slot
         Args:
             user_id: UUID of the user
             desk_id: ID of the desk
             slot_id: ID of the slot
+            booking_date: Date of the booking (YYYY-MM-DD)
         Returns: Tuple of (response_dict, status_code)
         """
         conn = get_db_connection(DB_CONFIG)
@@ -21,18 +22,19 @@ class DeskHold:
         try:
             cursor = conn.cursor()
             
-            # Check if desk is already booked or held for the slot
+            # Check if desk is already booked or held for the slot and date
             cursor.execute("""
                 SELECT status 
                 FROM sena.booking_transactions 
                 WHERE desk_id = %s AND slot_id = %s 
+                AND booking_date = %s
                 AND status IN ('booked', 'held')
-            """, (desk_id, slot_id))
+            """, (desk_id, slot_id, booking_date))
             
             existing_booking = cursor.fetchone()
             if existing_booking:
                 return {
-                    "error": "Desk is already booked or held for this slot"
+                    "error": "Desk is already booked or held for this slot and date"
                 }, 400
 
             # Get booking details JSON
@@ -61,7 +63,8 @@ class DeskHold:
                         'type', sm.slot_type,
                         'start_time', sm.start_time,
                         'end_time', sm.end_time,
-                        'time_zone', sm.time_zone
+                        'time_zone', sm.time_zone,
+                        'date', %s
                     ),
                     'desk_type', json_build_object(
                         'type', dtm.type,
@@ -78,20 +81,20 @@ class DeskHold:
                 LEFT JOIN sena.desk_pricing AS dp ON dp.slot_id = sm.id AND dp.desk_type_id = dtm.id
                 LEFT JOIN sena.users as u on u.id = %s
                 WHERE d.id = %s
-            """, (slot_id, user_id, desk_id))
+            """, (booking_date, slot_id, user_id, desk_id))
             
             booking_details = cursor.fetchone()[0]
             
             # Convert the booking details to a JSON string
             booking_details_json = json.dumps(booking_details)
 
-            # Insert the hold transaction with booking details
+            # Insert the hold transaction with booking details and date
             cursor.execute("""
                 INSERT INTO sena.booking_transactions 
-                (user_id, desk_id, slot_id, status, booking_details)
-                VALUES (%s, %s, %s, 'held', %s::jsonb)
-                RETURNING id, user_id, desk_id, slot_id, status
-            """, (user_id, desk_id, slot_id, booking_details_json))
+                (user_id, desk_id, slot_id, status, booking_details, booking_date)
+                VALUES (%s, %s, %s, 'held', %s::jsonb, %s)
+                RETURNING id, user_id, desk_id, slot_id, status, booking_date
+            """, (user_id, desk_id, slot_id, booking_details_json, booking_date))
             
             conn.commit()
             result = cursor.fetchone()
@@ -103,7 +106,8 @@ class DeskHold:
                     "user_id": result[1],
                     "desk_id": result[2],
                     "slot_id": result[3],
-                    "status": result[4]
+                    "status": result[4],
+                    "booking_date": result[5]
                 }
             }, 201
 
@@ -129,11 +133,12 @@ class DeskHold:
         try:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT bt.id, bt.user_id, bt.status, u.email
+                SELECT bt.id, bt.user_id, bt.status, u.email, bt.booking_date
                 FROM sena.booking_transactions bt
                 JOIN sena.users u ON bt.user_id = u.id
                 WHERE bt.desk_id = %s AND bt.slot_id = %s 
                 AND bt.status = 'held'
+                AND bt.booking_date >= CURRENT_DATE
             """, (desk_id, slot_id))
             
             hold_info = cursor.fetchone()
@@ -149,7 +154,8 @@ class DeskHold:
                 "held_by": {
                     "booking_id": hold_info[0],
                     "user_id": hold_info[1],
-                    "email": hold_info[3]
+                    "email": hold_info[3],
+                    "booking_date": hold_info[4]
                 },
                 "status": hold_info[2]
             }, 200

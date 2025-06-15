@@ -1,0 +1,33 @@
+version: '3.9'
+
+services:
+  ai:
+    build: ./AI
+    container_name: sena_ai
+    ports:
+      - "5001:5001"
+    networks:
+      - app-net
+  backend:
+    build: ./BackEnd
+    container_name: sena_backend
+    ports:
+      - "5000:5000"
+    depends_on:
+      - ai
+    networks:
+      - app-net
+
+  frontend:
+    build: ./FrontEnd
+    container_name: sena_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - app-net
+
+networks:
+  app-net:
+    driver: bridge

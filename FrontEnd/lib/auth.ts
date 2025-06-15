@@ -15,15 +15,23 @@ export async function authenticateUser(email: string, password: string): Promise
       body: JSON.stringify({ email, password }),
     });
 
+    console.log("Login API response status:", response.status);
+    const data = await response.json();
+    console.log("Login API response data:", data);
+
     if (!response.ok) {
       console.error("Login failed:", response.statusText);
       return null;
     }
 
-    const data = await response.json();
-    // Assuming the login endpoint returns user data directly if successful
-    // You might need to adjust this based on the actual response structure
-    return { id: data.id, email: data.email, name: data.first_name + " " + data.last_name, phone: data.phone };
+    // Ensure user object and its id/email are present
+    if (!data.user || !data.user.id || !data.user.email) {
+      console.error("Login response missing user object or its ID/email:", data);
+      return null;
+    }
+    const userName = data.user.first_name && data.user.last_name ? `${data.user.first_name} ${data.user.last_name}` : data.user.email; // Fallback to email if name parts are missing
+
+    return { id: data.user.id, email: data.user.email, name: userName, phone: data.user.phone || null };
   } catch (error) {
     console.error("Authentication error:", error);
     return null;
@@ -46,9 +54,14 @@ export async function registerUser(userData: { email: string; password: string; 
     }
 
     const data = await response.json();
-    // Assuming the signup endpoint returns user data directly if successful
-    // You might need to adjust this based on the actual response structure
-    return { id: data.id, email: data.email, name: data.first_name + " " + data.last_name, phone: data.phone };
+    // Ensure user object and its id/email are present
+    if (!data.user || !data.user.id || !data.user.email) {
+      console.error("Signup response missing user object or its ID/email:", data);
+      return null;
+    }
+    const newUserName = data.user.first_name && data.user.last_name ? `${data.user.first_name} ${data.user.last_name}` : data.user.email; // Fallback to email if name parts are missing
+
+    return { id: data.user.id, email: data.user.email, name: newUserName, phone: data.user.phone || null };
   } catch (error) {
     console.error("Registration error:", error);
     return null;

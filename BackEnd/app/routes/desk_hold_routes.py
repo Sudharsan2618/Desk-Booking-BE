@@ -15,14 +15,15 @@ def put_desk_on_hold():
     if not data:
         return jsonify({"error": "No data provided"}), 400
         
-    required_fields = ['user_id', 'desk_id', 'slot_id']
+    required_fields = ['user_id', 'desk_id', 'slot_id', 'booking_date']
     if not all(field in data for field in required_fields):
         return jsonify({"error": "Missing required fields"}), 400
     
     result, status_code = DeskHold.put_desk_on_hold(
         user_id=data['user_id'],
         desk_id=data['desk_id'],
-        slot_id=data['slot_id']
+        slot_id=data['slot_id'],
+        booking_date=data['booking_date']
     )
     return jsonify(result), status_code
 
