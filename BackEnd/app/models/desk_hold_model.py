@@ -157,4 +157,57 @@ class DeskHold:
         except Exception as e:
             return {"error": str(e)}, 500
         finally:
+            conn.close()
+
+    @staticmethod
+    def delete_held_booking(booking_id: int) -> Tuple[Dict, int]:
+        """
+        Delete a held booking transaction by its ID
+        Args:
+            booking_id: ID of the booking transaction to delete
+        Returns: Tuple of (response_dict, status_code)
+        """
+        conn = get_db_connection(DB_CONFIG)
+        if not conn:
+            return {"error": "Database connection failed"}, 500
+
+        try:
+            cursor = conn.cursor()
+            
+            # First check if the booking exists and is in 'held' status
+            cursor.execute("""
+                SELECT id 
+                FROM sena.booking_transactions 
+                WHERE id = %s AND status = 'held'
+            """, (booking_id,))
+            
+            if not cursor.fetchone():
+                return {
+                    "error": "No held booking found with the provided ID"
+                }, 404
+
+            # Delete the booking
+            cursor.execute("""
+                DELETE FROM sena.booking_transactions
+                WHERE id = %s AND status = 'held'
+                RETURNING id
+            """, (booking_id,))
+            
+            deleted_id = cursor.fetchone()
+            conn.commit()
+            
+            if deleted_id:
+                return {
+                    "message": "Held booking deleted successfully",
+                    "deleted_booking_id": deleted_id[0]
+                }, 200
+            else:
+                return {
+                    "error": "Failed to delete the booking"
+                }, 500
+
+        except Exception as e:
+            conn.rollback()
+            return {"error": str(e)}, 500
+        finally:
             conn.close() 
