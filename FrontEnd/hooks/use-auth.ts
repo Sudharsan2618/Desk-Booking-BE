@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { User, authenticateUser, registerUser } from "@/lib/auth"
+import { useRouter } from "next/navigation";
 
 interface UseAuthReturn {
   user: User | null
@@ -15,7 +16,7 @@ interface UseAuthReturn {
 export function useAuth(): UseAuthReturn {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
-
+  const router = useRouter();
   useEffect(() => {
     console.log("Auth hook: useEffect running");
     const storedUser = localStorage.getItem("user");
@@ -61,6 +62,7 @@ export function useAuth(): UseAuthReturn {
     setUser(null);
     localStorage.removeItem("user");
     console.log("Auth hook: User cleared from state and localStorage");
+    router.push("/login");
   }, []);
 
   const signup = useCallback(async (userData: { email: string; password: string; first_name: string; last_name: string; phone?: string }) => {

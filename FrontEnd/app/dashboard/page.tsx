@@ -59,6 +59,7 @@ export default function DashboardPage() {
   const [structuredDayPlan, setStructuredDayPlan] = useState<DayPlan | null>(null);
   const [aiError, setAiError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
+  const [bookingsLoading, setBookingsLoading] = useState<boolean>(true);
 
   const handleViewDetails = (booking: UserBooking) => {
     setSelectedBooking(booking);
@@ -78,6 +79,27 @@ export default function DashboardPage() {
     const location = `${selectedBooking.booking_details.building_information.address}, ${selectedBooking.booking_details.building_information.city}`;
     const preferences = "tech-focused activities";
 
+    // Prepare booking details for the AI
+    const bookingContext = {
+      deskDetails: {
+        name: selectedBooking.booking_details.desk_details.name,
+        description: selectedBooking.booking_details.desk_details.description,
+        floor: selectedBooking.booking_details.desk_details.floor_number,
+        capacity: selectedBooking.booking_details.desk_details.capacity
+      },
+      slotDetails: {
+        type: selectedBooking.booking_details.slot_details.type,
+        startTime: selectedBooking.booking_details.slot_details.start_time,
+        endTime: selectedBooking.booking_details.slot_details.end_time
+      },
+      buildingDetails: {
+        name: selectedBooking.booking_details.building_information.name,
+        address: selectedBooking.booking_details.building_information.address,
+        city: selectedBooking.booking_details.building_information.city
+      },
+      bookingDate: format(new Date(selectedBooking.updated_at), "yyyy-MM-dd")
+    };
+
     try {
       const response = await fetch("http://localhost:5001/ai/day-plan", {
         method: "POST",
@@ -87,6 +109,7 @@ export default function DashboardPage() {
         body: JSON.stringify({
           location,
           preferences,
+          bookingContext
         }),
       });
 
@@ -176,6 +199,8 @@ export default function DashboardPage() {
           setUserBookings(data.bookings || [])
         } catch (error) {
           console.error("Error fetching user bookings:", error)
+        } finally {
+          setBookingsLoading(false);
         }
       }
       fetchUserBookings()
@@ -242,7 +267,7 @@ export default function DashboardPage() {
             View your upcoming and past desk bookings.
           </p>
 
-          {isLoading ? (
+          {bookingsLoading ? (
             <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {Array.from({ length: 3 }).map((_, index) => (
                 <div key={index} className="border rounded-lg p-4 shadow-sm bg-white">
@@ -302,174 +327,221 @@ export default function DashboardPage() {
               ))}
             </div>
           ) : (
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Array.from({ length: 3 }).map((_, index) => (
-                <div key={index} className="border rounded-lg p-4 shadow-sm bg-white">
-                  <Skeleton height={20} width="70%" className="mb-2" />
-                  <Skeleton height={15} width="90%" className="mb-1" />
-                  <Skeleton height={15} width="80%" className="mb-1" />
-                  <Skeleton height={15} width="60%" className="mb-3" />
-                  <Skeleton height={36} className="w-full" />
-                </div>
-              ))}
-            </div>
+            <p className="text-muted-foreground text-center py-8">
+              You didn&apos;t have any booking currently.
+            </p>
           )}
         </div>
 
         {/* Booking Details Modal */}
         <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-          <DialogContent className="sm:max-w-full w-[95vw] h-[95vh] flex flex-col">
+          <DialogContent className="sm:max-w-full w-[100vw] h-[100vh] flex flex-col">
             <DialogHeader>
               <DialogTitle>Booking Details & Day Plan</DialogTitle>
               <DialogDescription>
                 Full details of your desk booking and an AI-generated day plan.
               </DialogDescription>
             </DialogHeader>
-            <div className="flex flex-1 flex-col md:flex-row gap-6 py-4">
+            <div className="flex flex-1 flex-col md:flex-row gap-6 py-4 overflow-hidden">
               {/* Left Half: Booking Details */}
-              <div className="flex-1 space-y-4">
-                <h4 className="font-semibold text-lg border-b pb-2 mb-2">Booking Information</h4>
-                {selectedBooking && (
-                  <div className="grid gap-2">
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Desk Name:</p>
-                      <p className="text-sm text-right">
-                        {selectedBooking.booking_details.desk_details.name}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Description:</p>
-                      <p className="text-sm text-right">
-                        {selectedBooking.booking_details.desk_details.description}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Floor:</p>
-                      <p className="text-sm text-right">
-                        {selectedBooking.booking_details.desk_details.floor_number}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Capacity:</p>
-                      <p className="text-sm text-right">
-                        {selectedBooking.booking_details.desk_details.capacity}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Slot Type:</p>
-                      <p className="text-sm text-right">
-                        {selectedBooking.booking_details.slot_details.type}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Time:</p>
-                      <p className="text-sm text-right">
-                        {selectedBooking.booking_details.slot_details.start_time} -{" "}
-                        {selectedBooking.booking_details.slot_details.end_time}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Building:</p>
-                      <p className="text-sm text-right">
-                        {selectedBooking.booking_details.building_information.name}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Address:</p>
-                      <p className="text-sm text-right">
-                        {selectedBooking.booking_details.building_information.address},
-                        {selectedBooking.booking_details.building_information.city}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Price:</p>
-                      <p className="text-sm text-right">
-                        ${selectedBooking.booking_details.pricing.price}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Status:</p>
-                      <p className="text-sm text-right">
-                        {selectedBooking.status}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 items-center gap-2">
-                      <p className="text-sm font-medium">Booked On:</p>
-                      <p className="text-sm text-right">
-                        {format(new Date(selectedBooking.updated_at), "PPPpp")}
-                      </p>
-                    </div>
+              <div className="flex-1 overflow-hidden">
+                <div className="bg-card rounded-lg border shadow-sm p-6 h-full flex flex-col">
+                  <h4 className="font-semibold text-lg mb-4 text-primary">Booking Information</h4>
+                  <div className="flex-1 overflow-y-auto pr-2">
+                    {selectedBooking && (
+                      <div className="grid gap-4">
+                        <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Desk Name</p>
+                            <p className="text-sm font-semibold mt-1">
+                              {selectedBooking.booking_details.desk_details.name}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Floor</p>
+                            <p className="text-sm font-semibold mt-1">
+                              {selectedBooking.booking_details.desk_details.floor_number}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Slot Type</p>
+                            <p className="text-sm font-semibold mt-1">
+                              {selectedBooking.booking_details.slot_details.type}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Time</p>
+                            <p className="text-sm font-semibold mt-1">
+                              {selectedBooking.booking_details.slot_details.start_time} -{" "}
+                              {selectedBooking.booking_details.slot_details.end_time}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-muted/50 rounded-lg">
+                          <p className="text-sm font-medium text-muted-foreground">Description</p>
+                          <p className="text-sm mt-1">
+                            {selectedBooking.booking_details.desk_details.description}
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Building</p>
+                            <p className="text-sm font-semibold mt-1">
+                              {selectedBooking.booking_details.building_information.name}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Capacity</p>
+                            <p className="text-sm font-semibold mt-1">
+                              {selectedBooking.booking_details.desk_details.capacity}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-muted/50 rounded-lg">
+                          <p className="text-sm font-medium text-muted-foreground">Address</p>
+                          <p className="text-sm mt-1">
+                            {selectedBooking.booking_details.building_information.address},{" "}
+                            {selectedBooking.booking_details.building_information.city}
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Price</p>
+                            <p className="text-sm font-semibold mt-1">
+                              ${selectedBooking.booking_details.pricing.price}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">Status</p>
+                            <p className="text-sm font-semibold mt-1">
+                              {selectedBooking.status}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-muted/50 rounded-lg">
+                          <p className="text-sm font-medium text-muted-foreground">Booked On</p>
+                          <p className="text-sm mt-1">
+                            {format(new Date(selectedBooking.updated_at), "PPPpp")}
+                          </p>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
-                <Button
-                  onClick={handlePlanMyDay}
-                  className="mt-4 w-full"
-                  disabled={isStreaming}
-                >
-                  {isStreaming ? "Generating Day Plan..." : "Generate Day Plan"}
-                </Button>
-                {aiError && (
-                  <div className="text-red-500 text-sm mt-2">
-                    {aiError}
+                  <div className="mt-6">
+                    <Button
+                      onClick={handlePlanMyDay}
+                      className="w-full"
+                      disabled={isStreaming}
+                    >
+                      {isStreaming ? "Generating Day Plan..." : "Generate Day Plan"}
+                    </Button>
+                    {aiError && (
+                      <div className="text-red-500 text-sm mt-2">
+                        {aiError}
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
 
               {/* Right Half: AI Day Plan */}
-              <div className="flex-1 flex flex-col">
-                <h4 className="font-semibold text-lg border-b pb-2 mb-4">Plan My Day (AI)</h4>
-                <div className="flex-1 overflow-y-auto pr-2 min-h-0 max-h-[60vh]">
-                  {isStreaming && !structuredDayPlan && (
-                    <div className="space-y-2">
-                      <Skeleton height={20} width="80%" />
-                      <Skeleton height={20} width="90%" />
-                      <Skeleton height={20} width="70%" />
-                    </div>
-                  )}
+              <div className="flex-1 overflow-hidden">
+                <div className="bg-card rounded-lg border shadow-sm p-6 h-full flex flex-col">
+                  <h4 className="font-semibold text-lg mb-4 text-primary">Plan My Day With AI</h4>
+                  <div className="flex-1 overflow-y-auto pr-2">
+                    {isStreaming && !structuredDayPlan && (
+                      <div className="space-y-2">
+                        <Skeleton height={20} width="80%" />
+                        <Skeleton height={20} width="90%" />
+                        <Skeleton height={20} width="70%" />
+                      </div>
+                    )}
 
-                  {!isStreaming && structuredDayPlan ? (
-                    <div className="space-y-4">
-                      {structuredDayPlan.morning && structuredDayPlan.morning.length > 0 && (
-                        <div>
-                          <h5 className="font-semibold text-md mb-2">Morning</h5>
-                          {structuredDayPlan.morning.map((activity, index) => (
-                            <div key={index} className="mb-2 p-2 border rounded-md">
-                              <p className="font-medium">{activity.time}: {activity.title}</p>
-                              <p className="text-sm text-muted-foreground">{activity.details}</p>
+                    {!isStreaming && structuredDayPlan ? (
+                      <div className="space-y-6">
+                        {structuredDayPlan.morning && structuredDayPlan.morning.length > 0 && (
+                          <div>
+                            <h5 className="font-semibold text-md mb-4 text-primary">Morning</h5>
+                            <div className="relative pl-8 space-y-4">
+                              {structuredDayPlan.morning.map((activity, index) => (
+                                <div key={index} className="relative">
+                                  <div className="absolute left-[-32px] top-2 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center">
+                                    <div className="w-3 h-3 rounded-full bg-primary"></div>
+                                  </div>
+                                  {index < (structuredDayPlan.morning?.length ?? 0) - 1 && (
+                                    <div className="absolute left-[-20px] top-8 w-0.5 h-[calc(100%+1rem)] bg-primary/20"></div>
+                                  )}
+                                  <div className="bg-muted/50 p-4 rounded-lg">
+                                    <p className="font-medium text-primary">{activity.time}</p>
+                                    <h6 className="font-semibold mt-1">{activity.title}</h6>
+                                    <p className="text-sm text-muted-foreground mt-2">{activity.details}</p>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
-                      )}
-                      {structuredDayPlan.afternoon && structuredDayPlan.afternoon.length > 0 && (
-                        <div>
-                          <h5 className="font-semibold text-md mb-2">Afternoon</h5>
-                          {structuredDayPlan.afternoon.map((activity, index) => (
-                            <div key={index} className="mb-2 p-2 border rounded-md">
-                              <p className="font-medium">{activity.time}: {activity.title}</p>
-                              <p className="text-sm text-muted-foreground">{activity.details}</p>
+                          </div>
+                        )}
+                        {structuredDayPlan.afternoon && structuredDayPlan.afternoon.length > 0 && (
+                          <div>
+                            <h5 className="font-semibold text-md mb-4 text-primary">Afternoon</h5>
+                            <div className="relative pl-8 space-y-4">
+                              {structuredDayPlan.afternoon.map((activity, index) => (
+                                <div key={index} className="relative">
+                                  <div className="absolute left-[-32px] top-2 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center">
+                                    <div className="w-3 h-3 rounded-full bg-primary"></div>
+                                  </div>
+                                  {index < (structuredDayPlan.afternoon?.length ?? 0) - 1 && (
+                                    <div className="absolute left-[-20px] top-8 w-0.5 h-[calc(100%+1rem)] bg-primary/20"></div>
+                                  )}
+                                  <div className="bg-muted/50 p-4 rounded-lg">
+                                    <p className="font-medium text-primary">{activity.time}</p>
+                                    <h6 className="font-semibold mt-1">{activity.title}</h6>
+                                    <p className="text-sm text-muted-foreground mt-2">{activity.details}</p>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
-                      )}
-                      {structuredDayPlan.evening && structuredDayPlan.evening.length > 0 && (
-                        <div>
-                          <h5 className="font-semibold text-md mb-2">Evening</h5>
-                          {structuredDayPlan.evening.map((activity, index) => (
-                            <div key={index} className="mb-2 p-2 border rounded-md">
-                              <p className="font-medium">{activity.time}: {activity.title}</p>
-                              <p className="text-sm text-muted-foreground">{activity.details}</p>
+                          </div>
+                        )}
+                        {structuredDayPlan.evening && structuredDayPlan.evening.length > 0 && (
+                          <div>
+                            <h5 className="font-semibold text-md mb-4 text-primary">Evening</h5>
+                            <div className="relative pl-8 space-y-4">
+                              {structuredDayPlan.evening.map((activity, index) => (
+                                <div key={index} className="relative">
+                                  <div className="absolute left-[-32px] top-2 w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center">
+                                    <div className="w-3 h-3 rounded-full bg-primary"></div>
+                                  </div>
+                                  {index < (structuredDayPlan.evening?.length ?? 0) - 1 && (
+                                    <div className="absolute left-[-20px] top-8 w-0.5 h-[calc(100%+1rem)] bg-primary/20"></div>
+                                  )}
+                                  <div className="bg-muted/50 p-4 rounded-lg">
+                                    <p className="font-medium text-primary">{activity.time}</p>
+                                    <h6 className="font-semibold mt-1">{activity.title}</h6>
+                                    <p className="text-sm text-muted-foreground mt-2">{activity.details}</p>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    !isStreaming && !aiError && (
-                      <p className="text-muted-foreground text-sm">
-                        Click &apos;Generate Day Plan&apos; to get AI suggestions for your day..
-                      </p>
-                    )
-                  )}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      !isStreaming && !aiError && (
+                        <p className="text-muted-foreground text-sm">
+                          Click &apos;Generate Day Plan&apos; to get AI suggestions for your day..
+                        </p>
+                      )
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

@@ -1119,16 +1119,14 @@ export default function DeskBookingPage() {
                                         <div className="flex items-center gap-3">
                                             <Building className="h-5 w-5 text-blue-600" />
                                             <div>
-                                                <p className="font-medium text-gray-800">Floor {selectedDesk.floor_number}</p>
+                                                <p className="font-medium text-gray-800">{selectedDesk.floor_number}th Floor</p>
                                                 <p className="text-sm text-gray-600">{selectedDesk.building_name}</p>
                                             </div>
                                         </div>
                                         <div className="flex items-center gap-3">
                                             <MapPin className="h-5 w-5 text-purple-600" />
                                             <div>
-                                                <p className="text-sm text-gray-600">{selectedDesk.building_address}</p>
-                                                <p className="text-sm text-gray-600">{selectedDesk.city}</p>
-                                            </div>
+                                                <p className="text-sm text-gray-600">{selectedDesk.building_address}</p>                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -1175,18 +1173,36 @@ export default function DeskBookingPage() {
                                         <h4 className="text-xl font-semibold text-gray-800">Amenities & Features</h4>
                                     </div>
                                     <div className="bg-gradient-to-br from-purple-50 to-pink-50 p-6 rounded-xl">
-                                        {selectedDesk.amenities && selectedDesk.amenities.length > 0 ? (
-                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                                {selectedDesk.amenities.map((amenity, idx) => (
-                                                    <div key={idx} className="flex items-center gap-2 text-gray-700 bg-white/60 px-3 py-2 rounded-lg">
-                                                        {getAmenityIcon(amenity)}
-                                                        <span className="text-sm font-medium">{amenity}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        ) : (
-                                            <p className="text-gray-500 text-center py-4">No specific amenities listed</p>
-                                        )}
+                                        {(() => {
+                                            // Handle different amenity data structures
+                                            let amenityItems: string[] = [];
+                                            
+                                            if (Array.isArray(selectedDesk.amenities)) {
+                                                amenityItems = selectedDesk.amenities.map(item => String(item));
+                                            } else if (typeof selectedDesk.amenities === 'object' && selectedDesk.amenities !== null) {
+                                                amenityItems = Object.entries(selectedDesk.amenities)
+                                                    .filter(([, value]) => value === true)
+                                                    .map(([key]) => key.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase()));
+                                            } else if (typeof selectedDesk.amenities === 'string') {
+                                                amenityItems = [selectedDesk.amenities];
+                                            }
+
+                                            return amenityItems.length > 0 ? (
+                                                <div className="grid grid-cols-1 gap-3">
+                                                    {amenityItems.map((amenity, idx) => (
+                                                        <div 
+                                                            key={idx} 
+                                                            className="flex items-center gap-3 text-gray-700 bg-white/70 px-4 py-2 rounded-xl shadow-sm border border-gray-200 hover:bg-white transition-all duration-200"
+                                                        >
+                                                             {getAmenityIcon(amenity)}
+                                                             <span className="text-base font-medium">{amenity}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <p className="text-gray-500 text-center py-4">No specific amenities listed</p>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
 

@@ -109,6 +109,3 @@ docker system prune -a  # Remove all unused containers, networks, images
 - Backend code is located in the `BackEnd` directory
 - AI service code is located in the `AI` directory
 
-## License
-
-[Your License Information]

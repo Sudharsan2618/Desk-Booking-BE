@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Home, LayoutDashboard, LampDesk } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { usePathname } from "next/navigation";
@@ -16,8 +17,16 @@ interface SidebarProps {
     logout: () => void;
 }
 
-export function Sidebar({ user, logout }: SidebarProps) {
+export function Sidebar({logout }: SidebarProps) {
     const pathname = usePathname();
+    const [user, setUser] = useState<User | null>(null);
+
+    useEffect(() => {
+        const storedUser = localStorage.getItem("user");
+        if (storedUser) {
+            setUser(JSON.parse(storedUser));
+        }
+    }, []);
 
     const getUserInitials = (name: string, email: string) => {
         if (name) {
@@ -28,7 +37,7 @@ export function Sidebar({ user, logout }: SidebarProps) {
                 .toUpperCase()
                 .slice(0, 2)
         }
-        return email.charAt(0).toUpperCase()
+        return email?.charAt(0)?.toUpperCase()
     }
 
     const userInitials = user ? getUserInitials(user.name || user.email, user.email) : "";
@@ -57,15 +66,15 @@ export function Sidebar({ user, logout }: SidebarProps) {
                     </Link>
                 </nav>
             </div>
-            {user && (
+            {/* {user && ( */}
                 <div className="border-t p-4 mt-auto">
                     <div className="flex items-center space-x-2 mb-4">
-                        <div className="h-9 w-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-medium">
+                        <div className="h-9 w-9 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-medium size-10">
                             {userInitials}
                         </div>
                         <div className="flex-1">
-                            <p className="text-sm font-medium">{user.name || user.email}</p>
-                            <p className="text-xs text-muted-foreground">{user.email}</p>
+                            <p className="text-sm font-medium">{user?.name || user?.email}</p>
+                            <p className="text-xs text-muted-foreground">{user?.email}</p>
                         </div>
                     </div>
                     <Button variant="outline" size="sm" onClick={logout} className="w-full">
@@ -73,7 +82,8 @@ export function Sidebar({ user, logout }: SidebarProps) {
                         Sign Out
                     </Button>
                 </div>
-            )}
+             {/* )} */}
+             
         </div>
     );
 } 
