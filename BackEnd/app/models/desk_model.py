@@ -102,14 +102,16 @@ class DeskData:
                     SELECT 
                         bt.desk_id,
                         bt.slot_id,
+                        sm.slot_type,
                         COALESCE(MAX(CASE 
                             WHEN bt.status = 'booked' THEN 'booked'
                             WHEN bt.status = 'held' THEN 'held'
                             ELSE NULL 
                         END), 'available') AS slot_status
                     FROM sena.booking_transactions AS bt
+                    JOIN sena.slot_master AS sm ON sm.id = bt.slot_id
                     WHERE {booking_date_condition_sql}
-                    GROUP BY bt.desk_id, bt.slot_id
+                    GROUP BY bt.desk_id, bt.slot_id, sm.slot_type
                 ),
                 desk_pricing AS (
                     SELECT 
@@ -128,6 +130,54 @@ class DeskData:
                         sm.time_zone
                     FROM sena.slot_master AS sm
                     {all_relevant_slots_where_clause}
+                ),
+                desk_aggregated_status AS (
+                    SELECT 
+                        dd.desk_id,
+                        CASE 
+                            WHEN EXISTS (
+                                SELECT 1 
+                                FROM slot_booking_status sbs 
+                                WHERE sbs.desk_id = dd.desk_id 
+                                AND sbs.slot_type = 'full_day' 
+                                AND sbs.slot_status = 'held'
+                            ) THEN 'held'
+                            WHEN EXISTS (
+                                SELECT 1 
+                                FROM slot_booking_status sbs 
+                                WHERE sbs.desk_id = dd.desk_id 
+                                AND sbs.slot_type = 'full_day' 
+                                AND sbs.slot_status = 'booked'
+                            ) THEN 'booked'
+                            WHEN EXISTS (
+                                SELECT 1 
+                                FROM slot_booking_status sbs 
+                                WHERE sbs.desk_id = dd.desk_id 
+                                AND sbs.slot_type IN ('morning', 'evening') 
+                                AND sbs.slot_status = 'booked'
+                            ) AND EXISTS (
+                                SELECT 1 
+                                FROM slot_booking_status sbs 
+                                WHERE sbs.desk_id = dd.desk_id 
+                                AND sbs.slot_type IN ('morning', 'evening') 
+                                AND sbs.slot_status = 'booked'
+                            ) THEN 'booked'
+                            WHEN EXISTS (
+                                SELECT 1 
+                                FROM slot_booking_status sbs 
+                                WHERE sbs.desk_id = dd.desk_id 
+                                AND sbs.slot_type = 'morning' 
+                                AND sbs.slot_status = 'held'
+                            ) AND EXISTS (
+                                SELECT 1 
+                                FROM slot_booking_status sbs 
+                                WHERE sbs.desk_id = dd.desk_id 
+                                AND sbs.slot_type = 'evening' 
+                                AND sbs.slot_status = 'held'
+                            ) THEN 'held'
+                            ELSE 'available'
+                        END AS aggregated_status
+                    FROM desk_details dd
                 )
                 SELECT 
                     JSON_AGG(
@@ -137,7 +187,7 @@ class DeskData:
                             'floor_number', dd.floor_number,
                             'capacity', dd.capacity,
                             'description', dd.description,
-                            'desk_status', dd.desk_status,
+                            'desk_status', COALESCE(das.aggregated_status, dd.desk_status),
                             'rating', dd.rating,
                             'building_name', dd.building_name,
                             'building_address', dd.building_address,
@@ -170,7 +220,8 @@ class DeskData:
                             COALESCE(dd.rating, 0) DESC,
                             (SELECT MIN(dp.price) FROM desk_pricing dp WHERE dp.desk_type_id = dd.desk_type_id) ASC NULLS LAST
                     ) AS desks_json
-                FROM desk_details AS dd;
+                FROM desk_details AS dd
+                LEFT JOIN desk_aggregated_status AS das ON das.desk_id = dd.desk_id;
             """
 
             cursor.execute(sql_query, tuple(query_params))
