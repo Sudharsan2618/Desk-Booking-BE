@@ -26,7 +26,7 @@ def put_desk_on_hold():
     )
     return jsonify(result), status_code
 
-@desk_hold_bp.route('/api/hold/status/<int:desk_id>/<int:slot_id>', methods=['GET'])
+@desk_hold_bp.route('/api/desks/hold/status/<int:desk_id>/<int:slot_id>', methods=['GET'])
 def get_desk_hold_status(desk_id, slot_id):
     """
     Check if a desk is on hold for a specific slot
@@ -34,7 +34,7 @@ def get_desk_hold_status(desk_id, slot_id):
     result, status_code = DeskHold.get_desk_hold_status(desk_id, slot_id)
     return jsonify(result), status_code
 
-@desk_hold_bp.route('/api/hold/<int:booking_id>', methods=['DELETE'])
+@desk_hold_bp.route('/api/desks/hold/<int:booking_id>', methods=['DELETE'])
 def delete_held_booking(booking_id):
     """
     Delete a held booking transaction by its ID
