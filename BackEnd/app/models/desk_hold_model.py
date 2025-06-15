@@ -41,7 +41,9 @@ class DeskHold:
             cursor.execute("""
                 SELECT json_build_object(
                     'user_details', json_build_object(
-                        'First Name', u.first_name,
+                        'name', COALESCE(u.first_name, 'XXXXXXX'),
+                        'email', COALESCE(u.email, 'XXXXXXX'),
+                        'phone', COALESCE(u.phone, 'XXXXXXX'),
                         'Description', d.description,
                         'Capacity', d.capacity,
                         'floor_number', d.floor_number

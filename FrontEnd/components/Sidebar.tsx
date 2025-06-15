@@ -5,8 +5,14 @@ import { Button } from "@/components/ui/button";
 import { usePathname } from "next/navigation";
 import { LogOut } from "lucide-react";
 
+interface User {
+    id: string;
+    name?: string | null;
+    email: string;
+}
+
 interface SidebarProps {
-    user: any; // You might want to define a more specific User type here
+    user: User | null;
     logout: () => void;
 }
 

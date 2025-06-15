@@ -82,8 +82,8 @@ export default function SignUpPage() {
       } else {
         setError(result.error || "An error occurred during registration. Please try again.");
       }
-    } catch (err: Error) {
-      setError(err.message || "An error occurred during registration. Please try again.")
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "An error occurred during registration. Please try again.")
     } finally {
       setIsLoading(false)
     }

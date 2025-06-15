@@ -1,23 +1,52 @@
 from flask import Blueprint, jsonify, request
 from flask_socketio import SocketIO, emit
 from app.models.desk_model import DeskData
+from app.config.database import DB_CONFIG
 import threading
 import time
 import gevent
+from psycopg2 import pool
 
 desk_bp = Blueprint('desk', __name__)
-socketio = SocketIO()
+
+# Configure SocketIO with optimized settings
+socketio = SocketIO(
+    cors_allowed_origins="*",
+    async_mode='threading',
+    logger=False,
+    engineio_logger=False
+)
+
+# Create connection pool
+connection_pool = pool.ThreadedConnectionPool(
+    minconn=1,
+    maxconn=10,
+    **DB_CONFIG
+)
 
 # Store connected clients and their active filters
 connected_clients = {}
+client_lock = threading.Lock()
+
+def get_db_connection():
+    """Get a connection from the pool"""
+    return connection_pool.getconn()
+
+def return_db_connection(conn):
+    """Return a connection to the pool"""
+    connection_pool.putconn(conn)
 
 def background_desk_updates():
     """
-    Background task to send desk updates to connected clients
+    Optimized background task to send desk updates to connected clients
     """
     while True:
         if connected_clients:
-            for client_id, filters in list(connected_clients.items()):
+            # Batch process clients to reduce database load
+            with client_lock:
+                clients_to_update = list(connected_clients.items())
+            
+            for client_id, filters in clients_to_update:
                 try:
                     desk_data, status_code = DeskData.get_desk_availability(
                         location_ids=filters.get('location_ids'), 
@@ -26,11 +55,16 @@ def background_desk_updates():
                         booking_date=filters.get('booking_date')
                     )
                     if status_code == 200:
-                        print(f"[Background Task] Emitting desk_update to {client_id}")
                         socketio.emit('desk_update', desk_data, room=client_id)
                 except Exception as e:
                     print(f"Error in background task for client {client_id}: {str(e)}")
-        time.sleep(5)  # Use time.sleep instead of gevent.sleep
+                    # Remove problematic client
+                    with client_lock:
+                        if client_id in connected_clients:
+                            del connected_clients[client_id]
+        
+        # Increased sleep time to reduce server load
+        time.sleep(10)
 
 # Start background task in a separate thread
 def start_background_task():
@@ -44,41 +78,46 @@ start_background_task()
 @socketio.on('connect')
 def handle_connect():
     """
-    Handle client connection
+    Handle client connection with optimized initial data load
     """
     client_id = request.sid
-    # Initialize filters for new client, will be updated by 'filter_update' event
-    connected_clients[client_id] = {'location_ids': [], 'desk_type_ids': [], 'slot_type_ids': [], 'booking_date': None}
-    print(f"Client connected: {client_id}")
+    with client_lock:
+        connected_clients[client_id] = {
+            'location_ids': [], 
+            'desk_type_ids': [], 
+            'slot_type_ids': [], 
+            'booking_date': None
+        }
     
-    # Send initial desk data (without filters initially, filters will be applied via filter_update event)
-    desk_data, status_code = DeskData.get_desk_availability()
-    # print(f"[Initial Connect] Fetched desk data for {client_id}: {desk_data}, Status: {status_code}")
-    if status_code == 200:
-        print(f"[Initial Connect] Attempting to emit initial desk_update event to {client_id}.")
-        emit('desk_update', desk_data, room=client_id)
-        print(f"[Initial Connect] Successfully emitted initial desk_update event to {client_id}.")
+    # Send initial desk data without filters
+    try:
+        desk_data, status_code = DeskData.get_desk_availability()
+        if status_code == 200:
+            emit('desk_update', desk_data, room=client_id)
+    except Exception as e:
+        print(f"Error sending initial data to client {client_id}: {str(e)}")
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """
-    Handle client disconnection
+    Handle client disconnection with cleanup
     """
     client_id = request.sid
-    if client_id in connected_clients:
-        del connected_clients[client_id]
-        print(f"Client disconnected: {client_id}")
+    with client_lock:
+        if client_id in connected_clients:
+            del connected_clients[client_id]
 
 @socketio.on('filter_update')
 def handle_filter_update(filters):
     """
-    Handle filter updates from client
+    Handle filter updates with optimized data fetching
     """
     client_id = request.sid
-    if client_id in connected_clients:
-        connected_clients[client_id] = filters
-        print(f"Filters updated for {client_id}: {filters}")
-        # Immediately send updated data based on new filters
+    with client_lock:
+        if client_id in connected_clients:
+            connected_clients[client_id] = filters
+    
+    try:
         desk_data, status_code = DeskData.get_desk_availability(
             location_ids=filters.get('location_ids'), 
             desk_type_ids=filters.get('desk_type_ids'),
@@ -86,54 +125,55 @@ def handle_filter_update(filters):
             booking_date=filters.get('booking_date')
         )
         if status_code == 200:
-            print(f"[Filter Update] Attempting to emit filtered desk_update to {client_id}.")
             emit('desk_update', desk_data, room=client_id)
-            print(f"[Filter Update] Successfully emitted filtered desk_update to {client_id}.")
+    except Exception as e:
+        print(f"Error updating filters for client {client_id}: {str(e)}")
 
 @desk_bp.route('/api/desks', methods=['GET'])
 def get_desks():
     """
-    Regular HTTP endpoint for getting desk data
+    Optimized HTTP endpoint for getting desk data
     """
-    # This endpoint can also accept query parameters for filtering if needed for REST calls
-    location_ids = request.args.getlist('location_ids')
-    desk_type_ids = request.args.getlist('desk_type_ids')
-    slot_type_ids = request.args.getlist('slot_type_ids')
-    booking_date = request.args.get('booking_date')
+    try:
+        location_ids = request.args.getlist('location_ids')
+        desk_type_ids = request.args.getlist('desk_type_ids')
+        slot_type_ids = request.args.getlist('slot_type_ids')
+        booking_date = request.args.get('booking_date')
 
-    # Convert comma-separated strings to lists if necessary
-    if location_ids and len(location_ids) == 1 and ',' in location_ids[0]:
-        location_ids = location_ids[0].split(',')
-    if desk_type_ids and len(desk_type_ids) == 1 and ',' in desk_type_ids[0]:
-        desk_type_ids = desk_type_ids[0].split(',')
-    if slot_type_ids and len(slot_type_ids) == 1 and ',' in slot_type_ids[0]:
-        slot_type_ids = slot_type_ids[0].split(',')
+        # Convert comma-separated strings to lists if necessary
+        if location_ids and len(location_ids) == 1 and ',' in location_ids[0]:
+            location_ids = location_ids[0].split(',')
+        if desk_type_ids and len(desk_type_ids) == 1 and ',' in desk_type_ids[0]:
+            desk_type_ids = desk_type_ids[0].split(',')
+        if slot_type_ids and len(slot_type_ids) == 1 and ',' in slot_type_ids[0]:
+            slot_type_ids = slot_type_ids[0].split(',')
 
-    # Ensure lists are empty if no valid parameters are provided
-    location_ids = location_ids if location_ids else None
-    desk_type_ids = desk_type_ids if desk_type_ids else None
-    slot_type_ids = slot_type_ids if slot_type_ids else None
-
-    desk_data, status_code = DeskData.get_desk_availability(location_ids=location_ids, desk_type_ids=desk_type_ids, slot_type_ids=slot_type_ids, booking_date=booking_date)
-    return jsonify(desk_data), status_code 
+        desk_data, status_code = DeskData.get_desk_availability(
+            location_ids=location_ids if location_ids else None,
+            desk_type_ids=desk_type_ids if desk_type_ids else None,
+            slot_type_ids=slot_type_ids if slot_type_ids else None,
+            booking_date=booking_date
+        )
+        return jsonify(desk_data), status_code
+    except Exception as e:
+        print(f"Error in get_desks endpoint: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @desk_bp.route('/api/desks/held', methods=['POST'])
 def hold_desk():
     """
-    API endpoint to put a desk slot on hold.
-    Expects JSON payload with user_id, desk_id, slot_id.
+    Optimized API endpoint to put a desk slot on hold
     """
     try:
         data = request.get_json()
         user_id = data.get('user_id')
         desk_id = data.get('desk_id')
         slot_id = data.get('slot_id')
+        booking_date = data.get('booking_date')
 
-        # Basic validation
-        if not all([user_id, desk_id, slot_id]):
-            return jsonify({"error": "Missing required fields: user_id, desk_id, slot_id"}), 400
+        if not all([user_id, desk_id, slot_id, booking_date]):
+            return jsonify({"error": "Missing required fields"}), 400
         
-        # Type conversion (ensure desk_id and slot_id are integers)
         try:
             desk_id = int(desk_id)
             slot_id = int(slot_id)
@@ -144,19 +184,21 @@ def hold_desk():
         return jsonify(response), status_code
 
     except Exception as e:
-        print(f"[API ERROR] Failed to process hold desk request: {str(e)}")
-        return jsonify({"error": f"Failed to process request: {str(e)}"}), 500 
+        print(f"Error in hold_desk endpoint: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500
 
 @desk_bp.route('/api/desks/user-bookings', methods=['GET'])
 def get_user_bookings():
     """
-    Get all bookings for a specific user
-    Query Parameters:
-        user_id: UUID of the user
+    Optimized endpoint to get user bookings
     """
-    user_id = request.args.get('user_id')
-    if not user_id:
-        return jsonify({"error": "User ID is required as query parameter"}), 400
-        
-    result, status_code = DeskData.get_user_bookings(user_id)
-    return jsonify(result), status_code 
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return jsonify({"error": "User ID is required"}), 400
+            
+        result, status_code = DeskData.get_user_bookings(user_id)
+        return jsonify(result), status_code
+    except Exception as e:
+        print(f"Error in get_user_bookings endpoint: {str(e)}")
+        return jsonify({"error": "Internal server error"}), 500 

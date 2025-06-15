@@ -1,6 +1,5 @@
 "use client"
 import type React from "react"
-import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import AuthProvider from "@/components/auth-provider"
 import { Sidebar } from "@/components/Sidebar"

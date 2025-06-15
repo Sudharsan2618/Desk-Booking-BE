@@ -4,12 +4,24 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/hooks/use-auth"
 import { Button } from "@/components/ui/button"
-import { LogOut, CalendarDays } from "lucide-react"
+import { CalendarDays } from "lucide-react"
 import { format } from "date-fns"
 import clsx from "clsx"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import Skeleton, { SkeletonTheme } from "react-loading-skeleton"
 import 'react-loading-skeleton/dist/skeleton.css'
+
+interface Activity {
+  time: string;
+  title: string;
+  details: string;
+}
+
+interface DayPlan {
+  morning?: Activity[];
+  afternoon?: Activity[];
+  evening?: Activity[];
+}
 
 interface UserBooking {
   booking_id: string
@@ -39,18 +51,20 @@ interface UserBooking {
 }
 
 export default function DashboardPage() {
-  const { user, isAuthenticated, isLoading, logout } = useAuth()
+  const { user, isAuthenticated, isLoading } = useAuth()
   const router = useRouter()
   const [userBookings, setUserBookings] = useState<UserBooking[]>([])
   const [selectedBooking, setSelectedBooking] = useState<UserBooking | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [aiResponse, setAiResponse] = useState<string>('');
+  const [structuredDayPlan, setStructuredDayPlan] = useState<DayPlan | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
 
   const handleViewDetails = (booking: UserBooking) => {
     setSelectedBooking(booking);
     setIsModalOpen(true);
-    setAiResponse(''); // Clear previous AI response
+    setStructuredDayPlan(null); // Clear previous AI response
+    setAiError(null);
     setIsStreaming(false); // Reset streaming status
   };
 
@@ -58,31 +72,94 @@ export default function DashboardPage() {
     if (!selectedBooking) return;
 
     setIsStreaming(true);
-    setAiResponse('');
+    setStructuredDayPlan(null);
+    setAiError(null);
 
-    const prompt = `Plan a day for me based on this desk booking:
-    Desk Name: ${selectedBooking.booking_details.desk_details.name}
-    Description: ${selectedBooking.booking_details.desk_details.description}
-    Floor: ${selectedBooking.booking_details.desk_details.floor_number}
-    Capacity: ${selectedBooking.booking_details.desk_details.capacity}
-    Slot Type: ${selectedBooking.booking_details.slot_details.type}
-    Time: ${selectedBooking.booking_details.slot_details.start_time} - ${selectedBooking.booking_details.slot_details.end_time}
-    Building: ${selectedBooking.booking_details.building_information.name}
-    Address: ${selectedBooking.booking_details.building_information.address}, ${selectedBooking.booking_details.building_information.city}
-    Price: $${selectedBooking.booking_details.pricing.price}
-    Status: ${selectedBooking.status}
-    Booked On: ${format(new Date(selectedBooking.updated_at), "PPPpp")}
+    const location = `${selectedBooking.booking_details.building_information.address}, ${selectedBooking.booking_details.building_information.city}`;
+    const preferences = "tech-focused activities";
 
-    Please provide a concise plan, suggest activities around the booking time and location, and suggest a good lunch spot nearby.`;
+    try {
+      const response = await fetch("http://localhost:5001/ai/day-plan", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          location,
+          preferences,
+        }),
+      });
 
-    // Simulate API call and streaming response
-    const dummyResponse = "Your day plan: \n\nMorning (8:00 AM - 12:00 PM): Arrive at the office, settle into your booked desk on Floor 3. Check emails and prepare for morning meetings.\n\nLunch (12:00 PM - 1:00 PM): Head to 'The Urban Spoon' cafe, just two blocks from your building. They have great sandwiches and fresh salads.\n\nAfternoon (1:00 PM - 5:00 PM): Focus on deep work at your desk. Schedule a quick 15-minute break around 3 PM to stretch. Attend any late afternoon virtual meetings.\n\nEvening (5:00 PM onwards): Wrap up your work. Consider a short walk around the city park nearby before heading home. ";
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
 
-    for (let i = 0; i < dummyResponse.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 20)); // Simulate delay for streaming
-      setAiResponse(prev => prev + dummyResponse[i]);
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Failed to get reader for streaming response.");
+      }
+
+      const decoder = new TextDecoder();
+      let done = false;
+      const contentFragments: string[] = []; // Accumulate content strings
+      let incompleteLine = "";
+      let hasCompleteObject = false;
+
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        const chunk = decoder.decode(value, { stream: true });
+
+        const lines = (incompleteLine + chunk).split(/\r?\n/);
+        incompleteLine = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const jsonPayload = line.substring("data: ".length).trim();
+            if (jsonPayload) {
+              try {
+                const parsed = JSON.parse(jsonPayload);
+                if (parsed.content !== undefined) {
+                  contentFragments.push(parsed.content); // Add content to array
+                } else if (parsed.complete !== undefined) {
+                  setStructuredDayPlan(parsed.complete);
+                  hasCompleteObject = true;
+                  done = true; // Signal outer loop to stop
+                  break; // Exit inner for loop (for this chunk's lines)
+                }
+              } catch (parseError) {
+                console.warn("Could not parse JSON payload from line:", jsonPayload, parseError);
+              }
+            }
+          }
+        }
+
+        if (hasCompleteObject) {
+          break;
+        }
+      }
+
+      // Only attempt final parsing if no 'complete' object was explicitly received
+      // and if there's accumulated content.
+      if (!hasCompleteObject && contentFragments.length > 0) {
+        const fullJsonResponseString = contentFragments.join(''); // Join all fragments
+        try {
+          const parsedDayPlan: DayPlan = JSON.parse(fullJsonResponseString);
+          setStructuredDayPlan(parsedDayPlan);
+        } catch (parseError) {
+          console.error("Error parsing final accumulated JSON response:", fullJsonResponseString, parseError);
+          setAiError("Failed to parse AI response: Invalid JSON format.");
+        }
+      } else if (hasCompleteObject) {
+          setAiError(null);
+      }
+
+    } catch (error) {
+      console.error("Error fetching AI day plan:", error);
+      setAiError(`Failed to generate day plan: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsStreaming(false);
     }
-    setIsStreaming(false);
   };
 
   useEffect(() => {
@@ -104,11 +181,6 @@ export default function DashboardPage() {
       fetchUserBookings()
     }
   }, [isAuthenticated, isLoading, router, user?.id])
-
-  const handleQuickLogout = () => {
-    logout()
-    router.push("/login")
-  }
 
   if (isLoading) {
     return (
@@ -147,20 +219,6 @@ export default function DashboardPage() {
     )
   }
 
-  const getUserInitials = (name: string, email: string) => {
-    if (name) {
-      return name
-        .split(" ")
-        .map((n) => n[0])
-        .join("")
-        .toUpperCase()
-        .slice(0, 2)
-    }
-    return email.charAt(0).toUpperCase()
-  }
-
-  const userInitials = user ? getUserInitials(user.name || user.email, user.email) : "";
-
   return (
     <SkeletonTheme baseColor="#E5E7EB" highlightColor="#F9FAFB">
       <div className="flex-1 p-6 md:p-8 space-y-8">
@@ -172,7 +230,6 @@ export default function DashboardPage() {
               Welcome back, {user?.name || user?.email}!
             </p>
           </div>
-
         </div>
 
         {/* Bookings Section */}
@@ -261,14 +318,14 @@ export default function DashboardPage() {
 
         {/* Booking Details Modal */}
         <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-          <DialogContent className="sm:max-w-full w-[95vw] max-h-[95vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-full w-[95vw] h-[95vh] flex flex-col">
             <DialogHeader>
               <DialogTitle>Booking Details & Day Plan</DialogTitle>
               <DialogDescription>
                 Full details of your desk booking and an AI-generated day plan.
               </DialogDescription>
             </DialogHeader>
-            <div className="flex flex-col md:flex-row gap-6 py-4">
+            <div className="flex flex-1 flex-col md:flex-row gap-6 py-4">
               {/* Left Half: Booking Details */}
               <div className="flex-1 space-y-4">
                 <h4 className="font-semibold text-lg border-b pb-2 mb-2">Booking Information</h4>
@@ -332,7 +389,7 @@ export default function DashboardPage() {
                     </div>
                     <div className="grid grid-cols-2 items-center gap-2">
                       <p className="text-sm font-medium">Status:</p>
-                      <p className="text-sm text-right capitalize">
+                      <p className="text-sm text-right">
                         {selectedBooking.status}
                       </p>
                     </div>
@@ -344,26 +401,76 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 )}
-              </div>
-
-              {/* Right Half: Plan My Day AI Response */}
-              <div className="flex-1 space-y-4 border-t md:border-t-0 md:border-l pt-4 md:pt-0 md:pl-6">
-                <h4 className="font-semibold text-lg border-b pb-2 mb-2">Plan My Day (AI)</h4>
-                {!aiResponse && !isStreaming ? (
-                  <Button onClick={handlePlanMyDay} className="w-full">
-                    Generate Day Plan
-                  </Button>
-                ) : (
-                  <div>
-                    {isStreaming ? (
-                      <div className="flex items-center justify-center space-x-2">
-                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary" />
-                        <p className="text-muted-foreground">Generating plan...</p>
-                      </div>
-                    ) : null}
-                    <p className="whitespace-pre-wrap text-sm text-gray-700">{aiResponse}</p>
+                <Button
+                  onClick={handlePlanMyDay}
+                  className="mt-4 w-full"
+                  disabled={isStreaming}
+                >
+                  {isStreaming ? "Generating Day Plan..." : "Generate Day Plan"}
+                </Button>
+                {aiError && (
+                  <div className="text-red-500 text-sm mt-2">
+                    {aiError}
                   </div>
                 )}
+              </div>
+
+              {/* Right Half: AI Day Plan */}
+              <div className="flex-1 flex flex-col">
+                <h4 className="font-semibold text-lg border-b pb-2 mb-4">Plan My Day (AI)</h4>
+                <div className="flex-1 overflow-y-auto pr-2 min-h-0 max-h-[60vh]">
+                  {isStreaming && !structuredDayPlan && (
+                    <div className="space-y-2">
+                      <Skeleton height={20} width="80%" />
+                      <Skeleton height={20} width="90%" />
+                      <Skeleton height={20} width="70%" />
+                    </div>
+                  )}
+
+                  {!isStreaming && structuredDayPlan ? (
+                    <div className="space-y-4">
+                      {structuredDayPlan.morning && structuredDayPlan.morning.length > 0 && (
+                        <div>
+                          <h5 className="font-semibold text-md mb-2">Morning</h5>
+                          {structuredDayPlan.morning.map((activity, index) => (
+                            <div key={index} className="mb-2 p-2 border rounded-md">
+                              <p className="font-medium">{activity.time}: {activity.title}</p>
+                              <p className="text-sm text-muted-foreground">{activity.details}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {structuredDayPlan.afternoon && structuredDayPlan.afternoon.length > 0 && (
+                        <div>
+                          <h5 className="font-semibold text-md mb-2">Afternoon</h5>
+                          {structuredDayPlan.afternoon.map((activity, index) => (
+                            <div key={index} className="mb-2 p-2 border rounded-md">
+                              <p className="font-medium">{activity.time}: {activity.title}</p>
+                              <p className="text-sm text-muted-foreground">{activity.details}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {structuredDayPlan.evening && structuredDayPlan.evening.length > 0 && (
+                        <div>
+                          <h5 className="font-semibold text-md mb-2">Evening</h5>
+                          {structuredDayPlan.evening.map((activity, index) => (
+                            <div key={index} className="mb-2 p-2 border rounded-md">
+                              <p className="font-medium">{activity.time}: {activity.title}</p>
+                              <p className="text-sm text-muted-foreground">{activity.details}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    !isStreaming && !aiError && (
+                      <p className="text-muted-foreground text-sm">
+                        Click &apos;Generate Day Plan&apos; to get AI suggestions for your day..
+                      </p>
+                    )
+                  )}
+                </div>
               </div>
             </div>
           </DialogContent>

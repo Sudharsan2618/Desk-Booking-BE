@@ -27,7 +27,7 @@ app.register_blueprint(desk_hold_bp)
 app.register_blueprint(desk_booking_bp)
 
 # Initialize SocketIO
-socketio.init_app(app, cors_allowed_origins="*")
+socketio.init_app(app, cors_allowed_origins="*", async_mode="eventlet")
 
 # Error handlers
 @app.errorhandler(HTTPException)

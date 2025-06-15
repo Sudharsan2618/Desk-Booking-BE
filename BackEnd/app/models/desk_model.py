@@ -3,6 +3,14 @@ from app.utils.db_utils import get_db_connection
 from app.config.database import DB_CONFIG
 import json
 import uuid
+import time
+from decimal import Decimal
+
+class DecimalEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        return super(DecimalEncoder, self).default(obj)
 
 class DeskData:
     @staticmethod
@@ -22,16 +30,16 @@ class DeskData:
 
         try:
             cursor = conn.cursor()
-
             query_params = []
             
-            # --- Desk Details Filters (l.id, d.desk_type_id) ---
-            desk_details_conditions = []
+            # Build WHERE conditions more efficiently
+            where_conditions = []
+            
             if location_ids:
                 filtered_location_ids = [loc_id for loc_id in location_ids if loc_id]
                 if filtered_location_ids:
-                    desk_details_conditions.append("l.id IN %s")
-                    query_params.append(tuple(filtered_location_ids))
+                    where_conditions.append("d.location_id = ANY(%s::uuid[])")
+                    query_params.append(filtered_location_ids)
             
             if desk_type_ids:
                 filtered_desk_type_ids = []
@@ -42,21 +50,14 @@ class DeskData:
                         except ValueError:
                             continue
                 if filtered_desk_type_ids:
-                    desk_details_conditions.append("d.desk_type_id IN %s")
-                    query_params.append(tuple(filtered_desk_type_ids))
+                    where_conditions.append("d.desk_type_id = ANY(%s)")
+                    query_params.append(filtered_desk_type_ids)
 
-            desk_details_where_clause = ""
-            if desk_details_conditions:
-                desk_details_where_clause = "WHERE " + " AND ".join(desk_details_conditions)
+            # Build the main WHERE clause
+            main_where = "WHERE " + " AND ".join(where_conditions) if where_conditions else ""
 
-            # --- Slot Booking Status Filter (bt.updated_at::date) ---
-            booking_date_condition_sql = "bt.booking_date = CURRENT_DATE"
-            if booking_date:
-                booking_date_condition_sql = "bt.booking_date = %s"
-                query_params.append(booking_date)
-
-            # --- All Relevant Slots Filter (sm.id) ---
-            all_relevant_slots_conditions = ["sm.is_active = true"]
+            # Handle slot type filtering separately
+            slot_type_where = ""
             if slot_type_ids:
                 filtered_slot_type_ids = []
                 for st_id in slot_type_ids:
@@ -66,13 +67,16 @@ class DeskData:
                         except ValueError:
                             continue
                 if filtered_slot_type_ids:
-                    all_relevant_slots_conditions.append("sm.id IN %s")
-                    query_params.append(tuple(filtered_slot_type_ids))
+                    slot_type_where = "AND sm.id = ANY(%s)"
+                    query_params.append(filtered_slot_type_ids)
 
-            all_relevant_slots_where_clause = "WHERE " + " AND ".join(all_relevant_slots_conditions)
+            # Use current date if booking_date not provided
+            target_date = booking_date or time.strftime('%Y-%m-%d')
+            query_params.append(target_date)
 
+            # Optimized query with better structure and indexing considerations
             sql_query = f"""
-                WITH desk_details AS (
+                WITH desk_base AS (
                     SELECT 
                         d.id AS desk_id,
                         d.name AS desk_name,
@@ -81,149 +85,121 @@ class DeskData:
                         d.description,
                         d.status AS desk_status,
                         d.rating,
+                        d.desk_type_id,
                         b.name AS building_name,
                         b.address AS building_address,
                         b.amenities,
                         b.operating_hours,
-                        l.name AS city,
-                        d.desk_type_id
-                    FROM sena.desks AS d
-                    LEFT JOIN sena.buildings AS b ON b.id = d.building_id
-                    LEFT JOIN sena.locations AS l ON l.id = d.location_id
-                    {desk_details_where_clause}
+                        l.name AS city
+                    FROM sena.desks d
+                    INNER JOIN sena.buildings b ON b.id = d.building_id
+                    INNER JOIN sena.locations l ON l.id = d.location_id
+                    {main_where}
                 ),
-                slot_booking_status AS (
+                active_slots AS (
                     SELECT 
-                        bt.desk_id,
-                        bt.slot_id,
-                        sm.slot_type,
-                        COALESCE(MAX(CASE 
-                            WHEN bt.status = 'booked' THEN 'booked'
-                            WHEN bt.status = 'held' THEN 'held'
-                            ELSE NULL 
-                        END), 'available') AS slot_status
-                    FROM sena.booking_transactions AS bt
-                    JOIN sena.slot_master AS sm ON sm.id = bt.slot_id
-                    WHERE {booking_date_condition_sql}
-                    GROUP BY bt.desk_id, bt.slot_id, sm.slot_type
-                ),
-                desk_pricing AS (
-                    SELECT 
-                        dp.desk_type_id,
-                        dp.slot_id,
-                        dp.price
-                    FROM sena.desk_pricing AS dp
-                    WHERE dp.is_active = true
-                ),
-                all_relevant_slots AS (
-                    SELECT
                         sm.id AS slot_id,
                         sm.slot_type,
                         sm.start_time,
                         sm.end_time,
                         sm.time_zone
-                    FROM sena.slot_master AS sm
-                    {all_relevant_slots_where_clause}
+                    FROM sena.slot_master sm
+                    WHERE sm.is_active = true
+                    {slot_type_where}
+                ),
+                booking_status AS (
+                    SELECT 
+                        bt.desk_id,
+                        bt.slot_id,
+                        CASE 
+                            WHEN COUNT(CASE WHEN bt.status = 'booked' THEN 1 END) > 0 THEN 'booked'
+                            WHEN COUNT(CASE WHEN bt.status = 'held' THEN 1 END) > 0 THEN 'held'
+                            ELSE 'available'
+                        END AS slot_status
+                    FROM sena.booking_transactions bt
+                    WHERE bt.booking_date = %s
+                    GROUP BY bt.desk_id, bt.slot_id
+                ),
+                desk_pricing_active AS (
+                    SELECT 
+                        dp.desk_type_id,
+                        dp.slot_id,
+                        dp.price
+                    FROM sena.desk_pricing dp
+                    WHERE dp.is_active = true
                 )
                 SELECT 
+                    db.desk_id,
+                    db.desk_name,
+                    db.floor_number,
+                    db.capacity,
+                    db.description,
+                    db.desk_status,
+                    db.rating,
+                    db.building_name,
+                    db.building_address,
+                    db.amenities,
+                    db.operating_hours,
+                    db.city,
                     JSON_AGG(
                         JSON_BUILD_OBJECT(
-                            'desk_id', dd.desk_id,
-                            'desk_name', dd.desk_name,
-                            'floor_number', dd.floor_number,
-                            'capacity', dd.capacity,
-                            'description', dd.description,
-                            'desk_status', dd.desk_status,
-                            'rating', dd.rating,
-                            'building_name', dd.building_name,
-                            'building_address', dd.building_address,
-                            'amenities', dd.amenities,
-                            'operating_hours', dd.operating_hours,
-                            'city', dd.city,
-                            'slots', (
-                                SELECT JSON_AGG(
-                                    JSON_BUILD_OBJECT(
-                                        'slot_id', ars.slot_id,
-                                        'slot_type', ars.slot_type,
-                                        'start_time', ars.start_time,
-                                        'end_time', ars.end_time,
-                                        'time_zone', ars.time_zone,
-                                        'status', COALESCE(sbs.slot_status, 'available'),
-                                        'price', COALESCE(dp.price, 0)
-                                    )
-                                    ORDER BY dp.price ASC NULLS LAST
-                                )
-                                FROM all_relevant_slots ars
-                                LEFT JOIN slot_booking_status sbs 
-                                    ON sbs.desk_id = dd.desk_id 
-                                    AND sbs.slot_id = ars.slot_id
-                                LEFT JOIN desk_pricing dp 
-                                    ON dp.desk_type_id = dd.desk_type_id 
-                                    AND dp.slot_id = ars.slot_id
-                            )
-                        )
-                        ORDER BY 
-                            COALESCE(dd.rating, 0) DESC,
-                            (SELECT MIN(dp.price) FROM desk_pricing dp WHERE dp.desk_type_id = dd.desk_type_id) ASC NULLS LAST
-                    ) AS desks_json
-                FROM desk_details AS dd;
+                            'slot_id', aslt.slot_id,
+                            'slot_type', aslt.slot_type,
+                            'start_time', aslt.start_time,
+                            'end_time', aslt.end_time,
+                            'time_zone', aslt.time_zone,
+                            'status', COALESCE(bs.slot_status, 'available'),
+                            'price', COALESCE(dpa.price, 0)
+                        ) ORDER BY dpa.price ASC NULLS LAST
+                    ) AS slots
+                FROM desk_base db
+                CROSS JOIN active_slots aslt
+                LEFT JOIN booking_status bs ON bs.desk_id = db.desk_id AND bs.slot_id = aslt.slot_id
+                LEFT JOIN desk_pricing_active dpa ON dpa.desk_type_id = db.desk_type_id AND dpa.slot_id = aslt.slot_id
+                GROUP BY 
+                    db.desk_id, db.desk_name, db.floor_number, db.capacity, 
+                    db.description, db.desk_status, db.rating, db.building_name,
+                    db.building_address, db.amenities, db.operating_hours, db.city,
+                    db.desk_type_id
+                ORDER BY 
+                    COALESCE(db.rating, 0) DESC,
+                    (SELECT MIN(dpa2.price) FROM desk_pricing_active dpa2 WHERE dpa2.desk_type_id = db.desk_type_id) ASC NULLS LAST;
             """
 
             cursor.execute(sql_query, tuple(query_params))
-            result = cursor.fetchone()
+            results = cursor.fetchall()
             
-            if not result or not result[0]:
+            if not results:
                 return {"desks": []}, 200
 
-            desks_data = result[0]
-
-            # Process the data in Python to implement the slot and desk status logic
-            for desk in desks_data:
-                if not desk.get('slots'):
-                    continue
-
-                # First, process slot statuses
-                full_day_slot = None
-                morning_slot = None
-                evening_slot = None
-
-                # Find the slots
-                for slot in desk['slots']:
-                    if slot['slot_type'].lower() == 'full day':
-                        full_day_slot = slot
-                    elif slot['slot_type'].lower() == 'morning':
-                        morning_slot = slot
-                    elif slot['slot_type'].lower() == 'evening':
-                        evening_slot = slot
-
-                # Apply slot availability rules
-                if full_day_slot and full_day_slot['status'] in ['booked', 'held']:
-                    # If full day is booked/held, make morning and evening unavailable
-                    if morning_slot:
-                        morning_slot['status'] = 'unavailable'
-                    if evening_slot:
-                        evening_slot['status'] = 'unavailable'
-                elif (morning_slot and morning_slot['status'] in ['booked', 'held']) or \
-                     (evening_slot and evening_slot['status'] in ['booked', 'held']):
-                    # If either morning or evening is booked/held, make full day unavailable
-                    if full_day_slot:
-                        full_day_slot['status'] = 'unavailable'
-
-                # Then, determine desk status based on slot statuses
-                if full_day_slot:
-                    if full_day_slot['status'] == 'booked':
-                        desk['desk_status'] = 'booked'
-                    elif full_day_slot['status'] == 'held':
-                        desk['desk_status'] = 'held'
-                elif morning_slot and evening_slot:
-                    if morning_slot['status'] == 'booked' and evening_slot['status'] == 'booked':
-                        desk['desk_status'] = 'booked'
-                    elif morning_slot['status'] == 'held' and evening_slot['status'] == 'held':
-                        desk['desk_status'] = 'held'
-                    else:
-                        desk['desk_status'] = 'available'
-                else:
-                    desk['desk_status'] = 'available'
+            # Process results more efficiently
+            desks_data = []
+            for row in results:
+                desk_data = {
+                    'desk_id': row[0],
+                    'desk_name': row[1],
+                    'floor_number': row[2],
+                    'capacity': row[3],
+                    'description': row[4],
+                    'desk_status': row[5],
+                    'rating': float(row[6]) if row[6] is not None else None,
+                    'building_name': row[7],
+                    'building_address': row[8],
+                    'amenities': row[9],
+                    'operating_hours': row[10],
+                    'city': row[11],
+                    'slots': row[12] if row[12] else []
+                }
+                
+                # Convert Decimal values in slots to float
+                if desk_data['slots']:
+                    for slot in desk_data['slots']:
+                        if 'price' in slot and isinstance(slot['price'], Decimal):
+                            slot['price'] = float(slot['price'])
+                
+                # Apply slot availability rules efficiently
+                DeskData._apply_slot_rules(desk_data)
+                desks_data.append(desk_data)
 
             return {"desks": desks_data}, 200
 
@@ -232,6 +208,51 @@ class DeskData:
             return {"error": f"Failed to fetch desk data: {str(e)}"}, 500
         finally:
             conn.close()
+
+    @staticmethod
+    def _apply_slot_rules(desk_data):
+        """Apply slot availability rules more efficiently"""
+        if not desk_data.get('slots'):
+            return
+
+        slots = desk_data['slots']
+        
+        # Create slot lookup for faster access
+        slot_lookup = {}
+        for slot in slots:
+            slot_type = slot['slot_type'].lower()
+            slot_lookup[slot_type] = slot
+
+        full_day = slot_lookup.get('full day')
+        morning = slot_lookup.get('morning')
+        evening = slot_lookup.get('evening')
+
+        # Apply rules
+        if full_day and full_day['status'] in ['booked', 'held']:
+            if morning:
+                morning['status'] = 'unavailable'
+            if evening:
+                evening['status'] = 'unavailable'
+        elif ((morning and morning['status'] in ['booked', 'held']) or 
+              (evening and evening['status'] in ['booked', 'held'])):
+            if full_day:
+                full_day['status'] = 'unavailable'
+
+        # Set desk status based on slot statuses
+        if full_day:
+            if full_day['status'] == 'booked':
+                desk_data['desk_status'] = 'booked'
+            elif full_day['status'] == 'held':
+                desk_data['desk_status'] = 'held'
+        elif morning and evening:
+            if morning['status'] == 'booked' and evening['status'] == 'booked':
+                desk_data['desk_status'] = 'booked'
+            elif morning['status'] == 'held' and evening['status'] == 'held':
+                desk_data['desk_status'] = 'held'
+            else:
+                desk_data['desk_status'] = 'available'
+        else:
+            desk_data['desk_status'] = 'available'
 
     @staticmethod
     def hold_desk_slot(user_id: str, desk_id: int, slot_id: int) -> Tuple[Dict, int]:

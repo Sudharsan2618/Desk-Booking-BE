@@ -8,13 +8,11 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import io from "socket.io-client";
+import io, { Socket } from "socket.io-client";
 import { ArrowRight, Calendar, MapPin, Clock, Users, Wifi, Coffee, Monitor, Building, CheckCircle, AlertCircle, Star } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { format } from "date-fns";
 import toast, { Toaster } from "react-hot-toast";
-import jsPDF from "jspdf";
-import QRCode from "qrcode";
 import { useDeskHold } from "@/hooks/use-desk-hold";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -111,9 +109,8 @@ export default function DeskBookingPage() {
 
     const [selectedDesk, setSelectedDesk] = useState<Desk | null>(null);
     const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
-    const [connectionStatus, setConnectionStatus] = useState<string>("Disconnected");
 
-    const socket = useRef<any>(null);
+    const socket = useRef<Socket | null>(null);
 
     // Pagination states
     const [currentPage, setCurrentPage] = useState(1);
@@ -145,11 +142,12 @@ export default function DeskBookingPage() {
             setDeskTypes(data.desk_types || []);
             setLocations(data.locations || []);
             setSlots(data.slots || []);
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
             console.error("Error fetching master data:", error);
-            toast.error(`Failed to load master data: ${error.message}. Please refresh the page.`);
+            toast.error(`Failed to load master data: ${errorMessage}. Please refresh the page.`);
         }
-    }, [toast]);
+    }, []);
 
     useEffect(() => {
         if (!isLoading && !isAuthenticated) {
@@ -175,30 +173,25 @@ export default function DeskBookingPage() {
 
         currentSocket.on('connect', () => {
             console.log('Connected to WebSocket');
-            setConnectionStatus('Connected');
             emitFilterChanges();
         });
 
         currentSocket.on('disconnect', () => {
             console.log('Disconnected from WebSocket');
-            setConnectionStatus('Disconnected');
         });
 
-        currentSocket.on('connect_error', (error: any) => {
+        currentSocket.on('connect_error', (error: Error) => {
             console.error('Connection error:', error);
-            setConnectionStatus('Connection Error');
             toast.error(`WebSocket connection error: ${error.message}.`);
         });
 
         currentSocket.on('reconnect_attempt', (attemptNumber: number) => {
             console.log('Reconnection attempt:', attemptNumber);
-            setConnectionStatus(`Reconnecting (${attemptNumber})...`);
             toast(`Reconnecting to server (attempt ${attemptNumber})...`, { icon: '⏳' });
         });
 
         currentSocket.on('reconnect', (attemptNumber: number) => {
             console.log('Reconnected after', attemptNumber, 'attempts');
-            setConnectionStatus('Connected');
             toast.success('Reconnected to server!');
             emitFilterChanges();
         });
@@ -227,7 +220,7 @@ export default function DeskBookingPage() {
             }
             clearInterval(heartbeatInterval);
         };
-    }, [emitFilterChanges, fetchMasterData, toast]);
+    }, [emitFilterChanges, fetchMasterData]);
 
     useEffect(() => {
         if (!isLoading && isAuthenticated) {
@@ -248,15 +241,7 @@ export default function DeskBookingPage() {
     }, [isModalOpen, heldBookingId, releaseHold]);
 
     if (isLoading || !isAuthenticated) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50">
-                <div className="text-center p-8 bg-white rounded-2xl shadow-lg">
-                    <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent mx-auto mb-6"></div>
-                    <h3 className="text-xl font-semibold text-gray-800 mb-2">Loading Desk Booking</h3>
-                    <p className="text-gray-600">Preparing your workspace experience...</p>
-                </div>
-            </div>
-        );
+        return null;
     }
 
     const handleBooking = async (deskId: string) => {
@@ -264,8 +249,6 @@ export default function DeskBookingPage() {
             toast.error("Please select a desk and a time slot first (and ensure it's held).");
             return;
         }
-
-        const currentUserId = "4f322373-16c4-4fb2-9f05-07c264ba2153"; // Placeholder: Replace with actual user ID
 
         try {
             const response = await fetch("http://localhost:5000/api/desks/confirm", {
@@ -295,13 +278,57 @@ export default function DeskBookingPage() {
             setHeldDeskId(null);
             setHeldSlotId(null);
             generateBookingPDF(data.booking);
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
             console.error("Error booking desk:", error);
-            toast.error(`Error booking desk: ${error.message}. Please try again.`);
+            toast.error(`Error booking desk: ${errorMessage}. Please try again.`);
         }
     };
 
-    const generateBookingPDF = async (bookingDetails: any) => {
+    const generateBookingPDF = async (bookingDetails: {
+        id: string;
+        booking_id: string;
+        desk_id: string;
+        desk_name: string;
+        building_name: string;
+        building_address: string;
+        start_time: string;
+        end_time: string;
+        price: number;
+        customer_name: string;
+        customer_email: string;
+        booking_details?: {
+            id: string;
+            desk_id: string;
+            user_details?: {
+                name?: string;
+                email?: string;
+                phone?: string;
+            };
+            slot_details?: {
+                date?: string;
+            };
+            desk_details?: {
+                name?: string;
+                floor_number?: string;
+                description?: string;
+            };
+            pricing?: {
+                price?: number;
+                tax?: number;
+                total?: number;
+            };
+            building_information?: {
+                name?: string;
+                address?: string;
+                operating_hours?: {
+                    open?: string;
+                    close?: string;
+                };
+                amenities?: string[] | Record<string, boolean>;
+            };
+        };
+    }) => {
         console.log("Booking Details for PDF generation:", bookingDetails)
         if (!bookingDetails || typeof bookingDetails !== 'object' || Array.isArray(bookingDetails)) {
             console.error("Invalid bookingDetails provided to generateBookingPDF:", bookingDetails);
@@ -387,7 +414,7 @@ export default function DeskBookingPage() {
             doc.setFontSize(11)
             doc.setTextColor(...hexToRgb(colors.text))
             doc.text(`#${bookingDetails.id ?? ''}`, pageWidth - 20, 35, { align: "right" })
-            doc.text(`Date: ${formatDate(bookingDetails.created_at ?? '')}`, pageWidth - 20, 42, { align: "right" })
+            doc.text(`Date: ${formatDate(new Date().toISOString())}`, pageWidth - 20, 42, { align: "right" })
 
             // Status badge
             doc.setFillColor(...hexToRgb(colors.success))
@@ -521,7 +548,7 @@ export default function DeskBookingPage() {
 
             // Subtotal
             if (pricing?.price !== undefined && pricing.price !== null) {
-                doc.text("Subtotal", totalsX, yPos)
+                doc.text("Total", totalsX, yPos)
                 doc.text(formatCurrency(pricing.price), pageWidth - 25, yPos, { align: "right" })
                 yPos += 8
             }
@@ -647,7 +674,7 @@ export default function DeskBookingPage() {
         await drawQRCode(venueEndY)
         drawFooter()
 
-        doc.save(`invoice_${bookingDetails.id ?? 'unknown'}.pdf`)
+        doc.save(`DeskBooking_Invoice_${bookingDetails.id ?? 'unknown'}.pdf`)
     };
 
     const handleHold = async (deskId: string, slotId: string) => {
@@ -656,13 +683,10 @@ export default function DeskBookingPage() {
             return;
         }
 
-        // Clear previous hold if a new slot is selected for the same desk
-        // Only clear if the selected slot in the modal changes, or if a new desk is being held.
         if ((heldBookingId && modalSelectedSlot !== slotId) || (heldDeskId && heldDeskId !== deskId)) {
             setHeldBookingId(null);
             setHeldDeskId(null);
             setHeldSlotId(null);
-            // In a real app, you might want to call a /cancel-hold endpoint here
         }
 
         try {
@@ -690,9 +714,10 @@ export default function DeskBookingPage() {
             setHeldDeskId(deskId);
             setHeldSlotId(slotId);
             toast.success("Desk held for 3 minutes! Please confirm your booking.");
-        } catch (error: any) {
+        } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
             console.error("Error holding desk:", error);
-            toast.error(`Error holding desk: ${error.message}. Please try again.`);
+            toast.error(`Error holding desk: ${errorMessage}. Please try again.`);
             setHeldBookingId(null);
             setHeldDeskId(null);
             setHeldSlotId(null);
@@ -704,19 +729,6 @@ export default function DeskBookingPage() {
     const indexOfFirstDesk = indexOfLastDesk - desksPerPage;
     const currentDesks = availableDesks.slice(indexOfFirstDesk, indexOfLastDesk);
     const totalPages = Math.ceil(availableDesks.length / desksPerPage);
-
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'Connected':
-                return 'text-green-600 bg-green-50';
-            case 'Disconnected':
-                return 'text-red-600 bg-red-50';
-            case 'Connection Error':
-                return 'text-red-600 bg-red-50';
-            default:
-                return 'text-yellow-600 bg-yellow-50';
-        }
-    };
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50">
@@ -859,7 +871,7 @@ export default function DeskBookingPage() {
                             <h3 className="text-2xl font-semibold text-gray-800">
                                 Available Desks
                                 {availableDesks.length > 0 && (
-                                    <span className="ml-2 text-lg font-normal text-gray-500">
+                                    <span className="ml-2 text-sm font-normal text-gray-500">
                                         ({availableDesks.length} found)
                                     </span>
                                 )}
