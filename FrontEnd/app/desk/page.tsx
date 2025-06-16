@@ -116,7 +116,21 @@ export default function DeskBookingPage() {
     const [currentPage, setCurrentPage] = useState(1);
     const [desksPerPage] = useState(6);
 
-    const userId = "4f322373-16c4-4fb2-9f05-07c264ba2153"; // Placeholder: Replace with actual user ID from authentication context
+    const [userId, setUserId] = useState<string | null>(null); // State to store user ID
+
+    useEffect(() => {
+        if (typeof window !== "undefined") {
+            const user = localStorage.getItem("user");
+            if (user) {
+                try {
+                    const userData = JSON.parse(user);
+                    setUserId(userData.id);
+                } catch (error) {
+                    console.error("Failed to parse user data from localStorage:", error);
+                }
+            }
+        }
+    }, []);
 
     const emitFilterChanges = useCallback(() => {
         if (!socket.current) return;
@@ -163,7 +177,7 @@ export default function DeskBookingPage() {
                 reconnection: true,
                 reconnectionAttempts: Infinity,
                 reconnectionDelay: 1000,
-                reconnectionDelayMax: 5000,
+                reconnectionDelayMax: 3000,
                 timeout: 20000,
                 transports: ['websocket', 'polling']
             });
