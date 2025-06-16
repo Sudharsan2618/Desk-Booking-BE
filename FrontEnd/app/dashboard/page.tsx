@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/hooks/use-auth"
 import { Button } from "@/components/ui/button"
@@ -60,6 +60,7 @@ export default function DashboardPage() {
   const [aiError, setAiError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [bookingsLoading, setBookingsLoading] = useState<boolean>(true);
+  const [streamingContent, setStreamingContent] = useState<string>("");
 
   const handleViewDetails = (booking: UserBooking) => {
     setSelectedBooking(booking);
@@ -69,121 +70,99 @@ export default function DashboardPage() {
     setIsStreaming(false); // Reset streaming status
   };
 
+  const handleStreamingResponse = useCallback((data: any) => {
+    if (data.content) {
+      setStreamingContent(prev => prev + data.content);
+    }
+    if (data.complete) {
+      setStructuredDayPlan(data.complete);
+      setIsStreaming(false);
+      setStreamingContent("");
+    }
+  }, []);
+
   const handlePlanMyDay = async () => {
     if (!selectedBooking) return;
 
     setIsStreaming(true);
     setStructuredDayPlan(null);
     setAiError(null);
+    setStreamingContent(""); // Reset streaming content
 
     const location = `${selectedBooking.booking_details.building_information.address}, ${selectedBooking.booking_details.building_information.city}`;
     const preferences = "tech-focused activities";
 
     // Prepare booking details for the AI
     const bookingContext = {
-      deskDetails: {
-        name: selectedBooking.booking_details.desk_details.name,
-        description: selectedBooking.booking_details.desk_details.description,
-        floor: selectedBooking.booking_details.desk_details.floor_number,
-        capacity: selectedBooking.booking_details.desk_details.capacity
-      },
-      slotDetails: {
-        type: selectedBooking.booking_details.slot_details.type,
-        startTime: selectedBooking.booking_details.slot_details.start_time,
-        endTime: selectedBooking.booking_details.slot_details.end_time
-      },
-      buildingDetails: {
-        name: selectedBooking.booking_details.building_information.name,
-        address: selectedBooking.booking_details.building_information.address,
-        city: selectedBooking.booking_details.building_information.city
-      },
-      bookingDate: format(new Date(selectedBooking.updated_at), "yyyy-MM-dd")
+        deskDetails: {
+            name: selectedBooking.booking_details.desk_details.name,
+            description: selectedBooking.booking_details.desk_details.description,
+            floor: selectedBooking.booking_details.desk_details.floor_number,
+            capacity: selectedBooking.booking_details.desk_details.capacity
+        },
+        slotDetails: {
+            type: selectedBooking.booking_details.slot_details.type,
+            startTime: selectedBooking.booking_details.slot_details.start_time,
+            endTime: selectedBooking.booking_details.slot_details.end_time
+        },
+        buildingDetails: {
+            name: selectedBooking.booking_details.building_information.name,
+            address: selectedBooking.booking_details.building_information.address,
+            city: selectedBooking.booking_details.building_information.city
+        },
+        bookingDate: format(new Date(selectedBooking.updated_at), "yyyy-MM-dd")
     };
 
     try {
-      const response = await fetch("http://localhost:5001/ai/day-plan", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          location,
-          preferences,
-          bookingContext
-        }),
-      });
+        const response = await fetch("http://localhost:5001/ai/day-plan", { // Changed port to 5001
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                location,
+                preferences,
+                bookingContext
+            }),
+        });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Failed to get reader for streaming response.");
-      }
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
 
-      const decoder = new TextDecoder();
-      let done = false;
-      const contentFragments: string[] = []; // Accumulate content strings
-      let incompleteLine = "";
-      let hasCompleteObject = false;
+        if (!reader) {
+            throw new Error("Failed to get reader for streaming response");
+        }
 
-      while (!done) {
-        const { value, done: readerDone } = await reader.read();
-        done = readerDone;
-        const chunk = decoder.decode(value, { stream: true });
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-        const lines = (incompleteLine + chunk).split(/\r?\n/);
-        incompleteLine = lines.pop() || "";
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
 
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const jsonPayload = line.substring("data: ".length).trim();
-            if (jsonPayload) {
-              try {
-                const parsed = JSON.parse(jsonPayload);
-                if (parsed.content !== undefined) {
-                  contentFragments.push(parsed.content); // Add content to array
-                } else if (parsed.complete !== undefined) {
-                  setStructuredDayPlan(parsed.complete);
-                  hasCompleteObject = true;
-                  done = true; // Signal outer loop to stop
-                  break; // Exit inner for loop (for this chunk's lines)
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        handleStreamingResponse(data);
+                    } catch (e) {
+                        console.error('Error parsing streaming data:', e);
+                        setAiError("Error parsing AI response. Please try again.");
+                    }
                 }
-              } catch (parseError) {
-                console.warn("Could not parse JSON payload from line:", jsonPayload, parseError);
-              }
             }
-          }
         }
-
-        if (hasCompleteObject) {
-          break;
-        }
-      }
-
-      // Only attempt final parsing if no 'complete' object was explicitly received
-      // and if there's accumulated content.
-      if (!hasCompleteObject && contentFragments.length > 0) {
-        const fullJsonResponseString = contentFragments.join(''); // Join all fragments
-        try {
-          const parsedDayPlan: DayPlan = JSON.parse(fullJsonResponseString);
-          setStructuredDayPlan(parsedDayPlan);
-        } catch (parseError) {
-          console.error("Error parsing final accumulated JSON response:", fullJsonResponseString, parseError);
-          setAiError("Failed to parse AI response: Invalid JSON format.");
-        }
-      } else if (hasCompleteObject) {
-          setAiError(null);
-      }
-
     } catch (error) {
-      console.error("Error fetching AI day plan:", error);
-      setAiError(`Failed to generate day plan: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsStreaming(false);
+        console.error('Error fetching day plan:', error);
+        setAiError(error instanceof Error ? error.message : "Failed to generate day plan. Please try again.");
+        setIsStreaming(false);
+        setStreamingContent("");
     }
-  };
+};
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -457,11 +436,13 @@ export default function DashboardPage() {
                 <div className="bg-card rounded-lg border shadow-sm p-6 h-full flex flex-col">
                   <h4 className="font-semibold text-lg mb-4 text-primary">Plan My Day With AI</h4>
                   <div className="flex-1 overflow-y-auto pr-2">
-                    {isStreaming && !structuredDayPlan && (
-                      <div className="space-y-2">
-                        <Skeleton height={20} width="80%" />
-                        <Skeleton height={20} width="90%" />
-                        <Skeleton height={20} width="70%" />
+                    {isStreaming && (
+                      <div className="space-y-4">
+                        <div className="bg-muted/50 p-4 rounded-lg">
+                          <pre className="whitespace-pre-wrap font-mono text-sm">
+                            {streamingContent}
+                          </pre>
+                        </div>
                       </div>
                     )}
 
@@ -537,7 +518,7 @@ export default function DashboardPage() {
                     ) : (
                       !isStreaming && !aiError && (
                         <p className="text-muted-foreground text-sm">
-                          Click &apos;Generate Day Plan&apos; to get AI suggestions for your day..
+                          Click &apos;Generate Day Plan&apos; to get AI suggestions for your day.
                         </p>
                       )
                     )}
