@@ -1,2 +1,2 @@
-# Intel-LLM
-LLM repo for Intel
+# Day Planer-LLM
+LLM repo for Planner

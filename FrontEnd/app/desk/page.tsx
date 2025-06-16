@@ -169,6 +169,23 @@ export default function DeskBookingPage() {
         }
     }, [isAuthenticated, isLoading, router]);
 
+    // Add this new function to handle desk updates while preserving pagination
+    const handleDeskUpdate = useCallback((updatedDesks: Desk[]) => {
+        setAvailableDesks(prevDesks => {
+            // Create a map of existing desks for quick lookup
+            const existingDesksMap = new Map(prevDesks.map(desk => [desk.desk_id, desk]));
+            
+            // Update the map with new desk data
+            updatedDesks.forEach(desk => {
+                existingDesksMap.set(desk.desk_id, desk);
+            });
+            
+            // Convert map back to array
+            return Array.from(existingDesksMap.values());
+        });
+        setLoadingDesks(false);
+    }, []);
+
     useEffect(() => {
         fetchMasterData();
 
@@ -212,9 +229,7 @@ export default function DeskBookingPage() {
 
         currentSocket.on('desk_update', (data: { desks: Desk[] }) => {
             console.log('Received desk update:', data);
-            setAvailableDesks(data.desks || []);
-            setCurrentPage(1);
-            setLoadingDesks(false);
+            handleDeskUpdate(data.desks || []);
         });
 
         const heartbeatInterval = setInterval(() => {
@@ -234,7 +249,7 @@ export default function DeskBookingPage() {
             }
             clearInterval(heartbeatInterval);
         };
-    }, [emitFilterChanges, fetchMasterData]);
+    }, [emitFilterChanges, fetchMasterData, handleDeskUpdate]);
 
     useEffect(() => {
         if (!isLoading && isAuthenticated) {
