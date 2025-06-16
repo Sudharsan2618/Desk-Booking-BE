@@ -21,7 +21,7 @@ Make sure the following ports are available on your system:
 
 1. Clone the repository:
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/Sudharsan2618/Desk-Booking-BE.git
 cd Desk-Booking-BE
 ```
 
